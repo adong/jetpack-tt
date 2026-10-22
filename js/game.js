@@ -688,6 +688,11 @@
   }
 
   function init() {
+    // the logo from the name in js/title.js: the last word big, the words before it small on top
+    const words = window.JP_TITLE.split(' ');
+    $('logo1').textContent = words.slice(0, -1).join(' ');
+    $('logo2').textContent = words[words.length - 1];
+    $('logo').setAttribute('aria-label', window.JP_TITLE);
     W.init($('game'));
     resize();
     window.addEventListener('resize', resize);
