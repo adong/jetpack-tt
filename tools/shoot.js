@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /* Screenshots with headless Chrome over the DevTools protocol (node 22's built-in WebSocket, no npm).
    node tools/shoot.js [steps.json] [outdir] [width height mobile]
-   Defaults: tools/shots.json, docs/, 1280 x 800. Serve ~/claude-games first (any server of ~/claude-games, port 8768 by default), or set
-   URL=... Each step may have js (run in the page, using the window.game hooks), wait (ms) and shot (file name).
+   Defaults: tools/shots.json, docs/, 1280 x 800, on this folder's index.html from file:// (or set URL=...). Each step may have js (run in the page, using the window.game hooks), wait (ms) and shot (file name).
    From TT Surf (by way of TT Ski Downhill). docs/screenshot.jpg: node tools/shoot.js tools/shots.json docs 1200 750 */
 'use strict';
 const { spawn } = require('child_process');
@@ -44,7 +43,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await send('Page.enable');
     await send('Emulation.setDeviceMetricsOverride', { width: +W, height: +H, deviceScaleFactor: 1, mobile: mobile === '1' });
     if (mobile === '1') await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
-    await send('Page.navigate', { url: process.env.URL || 'http://127.0.0.1:8768/jetpack-tt/' });
+    await send('Page.navigate', { url: process.env.URL || 'file://' + path.join(dir, 'index.html') });
     await sleep(4000);
     for (const s of steps) {
       if (s.size) await send('Emulation.setDeviceMetricsOverride', { width: s.size[0], height: s.size[1], deviceScaleFactor: 1, mobile: false });

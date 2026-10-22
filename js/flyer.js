@@ -157,6 +157,16 @@
       tag.position.y = headTop + 0.4;
       root.add(tag);
     }
+    // Foxy and Froggy fly further back, so when they're level with you they're right behind you: a little face over
+    // the head that shows through, Froggy's a bit higher, so you can always see where they are
+    let badge = null;
+    if (o.badge) {
+      badge = new T.Sprite(new T.SpriteMaterial({ map: G.emojiTexture(o.badge), depthTest: false, depthWrite: false, transparent: true }));
+      badge.renderOrder = 10;
+      badge.scale.setScalar(0.42);
+      badge.position.y = headTop + (o.badgeUp || 0.3);
+      root.add(badge);
+    }
     const bubble = new T.Sprite(new T.SpriteMaterial({ map: bubbleTexture(), color: '#7fe7ff', transparent: true, depthWrite: false }));
     bubble.scale.setScalar(2.05 * (scale / SCALE));
     bubble.visible = false;
@@ -211,7 +221,7 @@
     }
 
     return {
-      id, entry, root, person: p, headTop, tag, bubble, seq,
+      id, entry, root, person: p, headTop, tag, badge, bubble, seq,
       get hop() { return st.hop; },
       get mode() { return st.mode; },
       get move() { return st.mode === 'celebrate' ? segment(seq, st.modeT) : null; },
@@ -248,10 +258,11 @@
         const wantYaw = air ? AIR_YAW[air] || FLY_YAW : flying ? FLY_YAW : cele ? POSE_YAW[cele.mode] || FACE_YAW : FACE_YAW;
         st.yaw += (wantYaw - st.yaw) * damp(7, dt);
         turn.rotation.y = st.yaw;
-        // tilt: lean into the climb, a spin when zapped, a slow roll in the bubble
+        // tilt: lean into the climb, a shake when zapped (a shake, not a somersault: his outline stays where the
+        // rules say his body is, so coins still go to him exactly when they touch him), a slow roll in the bubble
         if (flying && s.dizzy > 0) {
-          st.spin -= dt * 12;
-          tilt.rotation.z = st.spin;
+          st.spin += dt * 30;
+          tilt.rotation.z = Math.sin(st.spin) * 0.22;
         } else if (flying && s.out) {
           st.spin += dt * 0.8;
           tilt.rotation.z = Math.sin(st.spin) * 0.5;
@@ -271,7 +282,13 @@
             standPose(p, air === 'boxing' ? st.airT * 6 : st.phase, air, damp(14, dt));
             p.legL.rotation.x = 0.3 + Math.sin(st.phase) * 0.15;
             p.legR.rotation.x = 0.1 - Math.sin(st.phase) * 0.15;
-          } else if (s.dizzy > 0) people.pose(p, st.phase, 'fall', damp(14, dt));
+          } else if (s.dizzy > 0) {
+            // zapped: arms flail back and forth (not up over his head, which would poke out of his outline)
+            st.phase += dt * 14;
+            people.pose(p, st.phase, 'jet', damp(14, dt));
+            p.armL.rotation.x = 0.4 + Math.sin(st.phase) * 0.6;
+            p.armR.rotation.x = 0.4 - Math.sin(st.phase) * 0.6;
+          }
           else if (s.ground && !s.hold) {
             st.phase += dt * 13;
             people.pose(p, st.phase, 'run', damp(16, dt));

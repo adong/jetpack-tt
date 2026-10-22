@@ -2,16 +2,19 @@
    the zappers (two emitter rods and crackling beams across the whole depth of the corridor, some spinning), the coins,
    the exit door with its landing pad and podium, and the sparks, smoke and confetti.
    Everything long is a pool that follows the camera: the lab is 420-720 m long but only ~45 m of it is ever built.
-   Flyers live in their own lanes (LANES, z) so two or three of them can share a height without hiding each other. */
+   The human flies in the front plane (z = 0) and his coins are drawn in that same plane, so a coin touches him on
+   screen exactly when it touches him in the rules. Foxy and Froggy fly further back (js/game.js picks the depths).
+   The camera stands right beside the flyers (same x) and looks straight across with an off-centre view, so everyone
+   at the same x is at the same place across the screen, whatever their depth: nobody looks ahead when they're level. */
 (function () {
   'use strict';
   const JP = (window.JP = window.JP || {});
   const T = THREE, G = Kit.gfx, LB = JP.lab;
   const H = LB.H;
-  const LANES = [0, -1.15, -2.3];
-  const ZAP_BACK = -3.1, ZAP_FRONT = 0.8;
+  const PLANE_Z = 0; // the human's plane: his coins, the brightest beam and the zapper orbs are drawn here
+  const ZAP_BACK = -3.1, ZAP_FRONT = 0.45;
   const WALL_Z = -4.3, FRONT_Z = 1.6;
-  const COIN_Z = -1.15;
+  const COIN_Z = PLANE_Z;
   const AHEAD = 34, BEHIND = 16; // how much of the lab is built around the camera
 
   let renderer, scene, camera, sun;
@@ -411,9 +414,10 @@
       const e = new T.Group();
       const rod = G.mesh(new T.CylinderGeometry(0.17, 0.17, depth, 14), rodMat, 0, 0, zc, e);
       rod.rotation.x = Math.PI / 2;
-      G.mesh(new T.SphereGeometry(0.3, 18, 12), capMat, 0, 0, ZAP_FRONT, e);
-      G.mesh(new T.SphereGeometry(0.14, 12, 8), coreMat, 0, 0, ZAP_FRONT + 0.22, e, false);
-      for (const z of [ZAP_BACK + 0.4, zc, ZAP_FRONT - 0.5]) {
+      // the orb in the human's plane: what he can touch is exactly where he sees it
+      G.mesh(new T.SphereGeometry(0.3, 18, 12), capMat, 0, 0, PLANE_Z, e);
+      G.mesh(new T.SphereGeometry(0.14, 12, 8), coreMat, 0, 0, PLANE_Z + 0.22, e, false);
+      for (const z of [ZAP_BACK + 0.4, -0.8, -1.6]) {
         const ring = G.mesh(new T.TorusGeometry(0.2, 0.05, 8, 18), capMat, 0, 0, z, e, false);
         ring.rotation.y = 0;
       }
@@ -427,7 +431,7 @@
     bt.needsUpdate = true;
     const boltMat = new T.MeshBasicMaterial({ map: bt, color: '#bff6ff', transparent: true, blending: T.AdditiveBlending, depthWrite: false, side: T.DoubleSide });
     const beams = [];
-    for (const z of [ZAP_FRONT - 0.1, zc, ZAP_BACK + 0.25]) {
+    for (const z of [PLANE_Z, -0.8, -1.6, ZAP_BACK + 0.25]) {
       const b = new T.Mesh(new T.PlaneGeometry(1, 0.9), boltMat);
       b.position.z = z;
       g.add(b);
@@ -438,7 +442,7 @@
     sheet.position.z = zc;
     g.add(sheet);
     const glow = new T.Sprite(new T.SpriteMaterial({ map: G.glowTexture(), color: '#5fd8ff', transparent: true, opacity: 0.55, blending: T.AdditiveBlending, depthWrite: false }));
-    glow.position.z = ZAP_FRONT;
+    glow.position.z = PLANE_Z;
     g.add(glow);
     g.visible = false;
     scene.add(g);
@@ -576,8 +580,10 @@
   const view = { x: 0, w: 1, h: 1 };
   // The camera fits the whole lab height between the HUD at the top and the buttons at the bottom (m.top / m.bottom,
   // in pixels), and keeps at least VW m of lab across, whatever the screen shape. focusY (the podium) overrides the
-  // height it looks at; zoom > 1 moves in.
-  function frame(camX, focusY, zoom, m) {
+  // height it looks at; zoom > 1 moves in. It stands at camX and looks straight across the lab; `lead` is how far
+  // across the screen camX shows (0.3 while flying: the flyers a third of the way in, more lab ahead), done with an
+  // off-centre view rather than by turning the camera, so everything at camX lines up whatever its depth.
+  function frame(camX, focusY, zoom, m, lead) {
     m = m || { top: 24, bottom: 24 };
     const fov = (camera.fov * Math.PI) / 180, tan = Math.tan(fov / 2), w = view.w, h = view.h, aspect = w / h;
     const VW = aspect < 0.7 ? 12 : aspect < 1 ? 14 : 17.5;
@@ -591,17 +597,27 @@
       cy = hi >= lo ? (hi + lo) / 2 : H / 2;
     }
     const dist = VH / (2 * tan);
-    camera.position.set(camX, cy + 0.5, LANES[1] + dist);
-    camera.lookAt(camX, cy, LANES[1]);
+    camera.position.set(camX, cy + 0.5, PLANE_Z + dist);
+    camera.lookAt(camX, cy, PLANE_Z);
+    const ld = lead == null ? 0.5 : lead;
+    camera.aspect = aspect;
+    if (Math.abs(ld - 0.5) < 1e-4) camera.clearViewOffset();
+    else camera.setViewOffset(2 * Math.max(ld, 1 - ld) * w, h, ld < 0.5 ? (1 - 2 * ld) * w : 0, 0, w, h);
     // the light follows so the flyers' shadows stay on the floor
     sun.position.set(camX + 6, 22, 14);
     sun.target.position.set(camX + 4, 0, -1);
     sun.target.updateMatrixWorld();
     view.x = camX;
   }
-  // how many metres of lab are in view across, at the flyers' depth (for placing things on screen)
+  // where to draw something that is at (x, y) but z deep, so that it shows on screen exactly where (x, y) in the
+  // human's plane shows: on the camera's sightline through that point (call after frame())
+  function lineUp(x, y, z, out) {
+    const c = camera.position, k = (c.z - z) / (c.z - PLANE_Z);
+    return out.set(c.x + (x - c.x) * k, c.y + (y - c.y) * k, z);
+  }
+  // how many metres of lab are in view across, in the human's plane
   function visibleWidth() {
-    const fov = (camera.fov * Math.PI) / 180, dist = camera.position.z - LANES[1];
+    const fov = (camera.fov * Math.PI) / 180, dist = camera.position.z - PLANE_Z;
     return 2 * Math.tan(fov / 2) * dist * (view.w / view.h);
   }
 
@@ -678,7 +694,7 @@
   }
 
   JP.world = {
-    LANES, COIN_Z, ZAP_FRONT, init, setLab, resize, update, render, frame, visibleWidth,
+    PLANE_Z, COIN_Z, ZAP_FRONT, init, setLab, resize, update, render, frame, visibleWidth, lineUp,
     get scene() { return scene; },
     get camera() { return camera; },
     get renderer() { return renderer; },

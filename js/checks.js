@@ -10,7 +10,12 @@
    - bounds, frames, feel: the physics. Nobody leaves the lab or goes faster than the top speeds; 30, 60, 144 and a
      jumpy frame rate give exactly the same flight; EASY climbs and falls more gently than NORMAL.
    - zaps: hits are where the beams are, EASY never knocks you out, NORMAL does after 3, the shield blocks.
-   - easyRace: on EASY a wobbly 5-year-old beats Foxy and Froggy most of the time. */
+   - coins: a coin is yours when its disc touches your body as drawn (and not 2 cm before); Foxy and Froggy each
+     collect their own copy of the coins, so flying your exact line they never take one of yours; two brothers on the
+     same line share the coins evenly, and two equally good brothers each win their share of races.
+   - easyRace: on EASY a wobbly 5-year-old beats Foxy and Froggy most of the time, and so does a sloppier one.
+   - normalRace: on NORMAL a careful 8-year-old beats them sometimes: not never, not always. (tools/fair.js checks the
+     same things in the real page, flying with keys.) */
 (function () {
   'use strict';
   const JP = (window.JP = window.JP || {});
@@ -211,24 +216,114 @@
       return { stat: `hits within 1 cm of the beams and orbs, spinner on time; EASY: ${e.f.zaps} zaps, never out; NORMAL: out after ${n.f.zaps}; shield: ${sh.flyers[0].blocks} block, 0 zaps`, problems };
     },
 
+    coins() {
+      const problems = [];
+      const lab = L.generate(4, 'easy');
+      // a: the touch shape, one coin at a time, 2 cm inside and outside each edge of the body (+ the coin's radius)
+      const edge = (dy, dx) => {
+        const one = { level: 'easy', exitX: 60, path: lab.path, zaps: [], coins: [{ x: 20 + (dx || 0), y: 3 + dy }] };
+        reindex(one);
+        const rc = L.race({ lab: one, flyers: [{ id: 'teddy' }] });
+        L.go(rc);
+        for (let n = 0; n < 2400 && rc.phase !== 'done'; n++) {
+          rc.flyers[0].y = 3;
+          rc.flyers[0].vy = 0;
+          L.step(rc, 1 / 60, () => false);
+        }
+        return rc.flyers[0].coins;
+      };
+      const B = L.BODY, C = L.COIN_R;
+      const cases = [['above the hair', B.up + C], ['below the feet', -B.down - C]];
+      for (const [where, dy] of cases) {
+        if (edge(dy - Math.sign(dy) * 0.02) !== 1) problems.push(`a coin just touching ${where} was not collected`);
+        if (edge(dy + Math.sign(dy) * 0.02) !== 0) problems.push(`a coin 2 cm ${where} was collected`);
+      }
+      // b: Foxy and Froggy fly exactly his line: he still gets every coin he'd get alone, and they get their own
+      let alone = 0, withThem = 0, theirs = 0;
+      for (const seed of [1, 2, 3]) {
+        const fly = (others) => {
+          const fl = [{ id: 'teddy', bot: 'exact' }];
+          if (others) fl.push({ id: 'foxy', cpu: true, bot: 'exact' }, { id: 'froggy', cpu: true, bot: 'exact' });
+          const rc = L.race({ seed, level: 'easy', flyers: fl });
+          L.go(rc);
+          while (rc.phase !== 'done') L.step(rc, 1 / 60, () => false);
+          return rc;
+        };
+        alone += fly(false).flyers[0].coins;
+        const rc = fly(true);
+        withThem += rc.flyers[0].coins;
+        theirs += rc.flyers[1].coins + rc.flyers[2].coins;
+        for (let k = 0; k < rc.taken.length; k++) if (rc.taken[k] > 1) { problems.push(`lab ${seed}: ${rc.flyers[rc.taken[k] - 1].id} took one of the human's coins`); break; }
+      }
+      if (withThem !== alone) problems.push(`flying with Foxy and Froggy on his exact line he got ${withThem} coins, alone ${alone}`);
+      if (theirs !== 2 * alone) problems.push(`Foxy and Froggy on the same line got ${theirs} coins between them (should be ${2 * alone})`);
+      // c: two brothers on the very same line share the coins; two equally good brothers each win races
+      let a = 0, b = 0, solo = 0;
+      for (const seed of [1, 2]) {
+        const rc = L.race({ seed, level: 'easy', flyers: [{ id: 'teddy', bot: 'exact' }, { id: 'tommy', bot: 'exact' }] });
+        L.go(rc);
+        while (rc.phase !== 'done') L.step(rc, 1 / 60, () => false);
+        a += rc.flyers[0].coins;
+        b += rc.flyers[1].coins;
+        const s1 = L.race({ seed, level: 'easy', flyers: [{ id: 'teddy', bot: 'exact' }] });
+        L.go(s1);
+        while (s1.phase !== 'done') L.step(s1, 1 / 60, () => false);
+        solo += s1.flyers[0].coins;
+      }
+      if (a + b !== solo || Math.abs(a - b) > 2) problems.push(`two brothers on one line got ${a} and ${b} coins (alone: ${solo})`);
+      let tw = 0, mw = 0;
+      for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+        const rc = L.race({ seed, level: 'easy', flyers: [{ id: 'teddy', bot: 'wobbly5' }, { id: 'tommy', bot: 'wobbly5' }] });
+        L.go(rc);
+        while (rc.phase !== 'done') L.step(rc, 1 / 60, () => false);
+        L.places(rc);
+        if (rc.flyers[0].place === 1) tw++;
+        if (rc.flyers[1].place === 1) mw++;
+      }
+      if (tw < 2 || mw < 2) problems.push(`two equally good brothers: Teddy won ${tw}, Tommy ${mw} of 8`);
+      return { stat: `touch edges right to 2 cm; on his exact line he gets ${withThem} coins with Foxy and Froggy, ${alone} alone, and they get their own ${theirs}; brothers on one line ${a} / ${b}; equal brothers won ${tw} / ${mw} of 8`, problems };
+    },
+
     easyRace(o) {
       const problems = [];
-      let wins = 0, races = 0, kidCoins = 0, cpuCoins = 0;
+      const out = {};
+      for (const kid of ['wobbly5', 'sloppy5']) {
+        let wins = 0, races = 0, kidCoins = 0, cpuCoins = 0;
+        for (const seed of o.seeds) {
+          const rc = L.race({ seed, level: 'easy', flyers: [{ id: 'tommy', bot: kid }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'easy') }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'easy') }] });
+          L.go(rc);
+          for (let n = 0; n < 200000 && rc.phase !== 'done'; n++) L.step(rc, 1 / 60, () => false);
+          races++;
+          if (!rc.finished) problems.push(`EASY lab ${seed}: the race didn't reach the exit`);
+          L.places(rc);
+          if (rc.flyers[0].place === 1) wins++;
+          kidCoins += rc.flyers[0].coins;
+          cpuCoins += (rc.flyers[1].coins + rc.flyers[2].coins) / 2;
+          if (rc.flyers.some((f) => f.out)) problems.push(`EASY lab ${seed}: someone got knocked out`);
+        }
+        out[kid] = { wins, races, kid: Math.round(kidCoins / races), cpu: Math.round(cpuCoins / races) };
+        if (wins < races * 0.7) problems.push(`the ${kid === 'wobbly5' ? 'wobbly' : 'sloppy'} 5-year-old won only ${wins} of ${races} EASY races against Foxy and Froggy`);
+      }
+      const w = out.wobbly5, s = out.sloppy5;
+      return { stat: `wobbly 5-year-old won ${w.wins} of ${w.races} EASY races (${w.kid} coins a race; Foxy and Froggy ${w.cpu}), a sloppier one ${s.wins} of ${s.races} (${s.kid})`, problems };
+    },
+
+    normalRace(o) {
+      const problems = [];
+      let wins = 0, races = 0, kidCoins = 0, cpuCoins = 0, outs = 0;
       for (const seed of o.seeds) {
-        const rc = L.race({ seed, level: 'easy', flyers: [{ id: 'tommy', bot: 'wobbly5' }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'easy') }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'easy') }] });
+        const rc = L.race({ seed, level: 'normal', flyers: [{ id: 'teddy', bot: 'careful8' }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'normal') }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'normal') }] });
         L.go(rc);
         for (let n = 0; n < 200000 && rc.phase !== 'done'; n++) L.step(rc, 1 / 60, () => false);
         races++;
-        if (!rc.finished) problems.push(`EASY lab ${seed}: the race didn't reach the exit`);
-        const order = L.places(rc);
-        if (rc.flyers[0].place === 1) wins++;
+        L.places(rc);
+        if (rc.finished && rc.flyers[0].place === 1 && rc.flyers.filter((f) => f.place === 1).length === 1) wins++;
+        if (rc.flyers[0].out) outs++;
         kidCoins += rc.flyers[0].coins;
         cpuCoins += (rc.flyers[1].coins + rc.flyers[2].coins) / 2;
-        if (rc.flyers.some((f) => f.out)) problems.push(`EASY lab ${seed}: someone got knocked out`);
-        void order;
       }
-      if (wins < races * 0.7) problems.push(`the wobbly 5-year-old won only ${wins} of ${races} EASY races against Foxy and Froggy`);
-      return { stat: `wobbly 5-year-old won ${wins} of ${races} EASY races (${Math.round(kidCoins / races)} coins a race; Foxy and Froggy ${Math.round(cpuCoins / races)})`, problems };
+      if (wins < Math.max(1, races * 0.2) || wins > races * 0.85) problems.push(`the careful 8-year-old won ${wins} of ${races} NORMAL races (should be sometimes: not never, not always)`);
+      return { stat: `careful 8-year-old won ${wins} of ${races} NORMAL races (${Math.round(kidCoins / races)} coins a race; Foxy and Froggy ${Math.round(cpuCoins / races)}; out of hearts ${outs} times)`, problems };
     },
   };
   // the zaps check builds its own little lab: rebuild the lookup boxes after swapping the zappers in
@@ -256,7 +351,9 @@
     { name: 'rawdt', check: 'frames', why: 'one physics step per frame', phys: 'rawdt' },
     { name: 'easyHard', check: 'feel', why: 'EASY flies like NORMAL', phys: 'easyHard' },
     { name: 'noShield', check: 'zaps', why: 'the shield does nothing', phys: 'noShield' },
-    { name: 'cpuStrong', check: 'easyRace', why: 'Foxy and Froggy go all out on EASY', phys: 'cpuStrong' },
+    { name: 'sharedCoins', check: 'coins', why: 'Foxy and Froggy race for the human\'s coins', phys: 'sharedCoins' },
+    { name: 'cpuPerfect', check: 'easyRace', why: 'Foxy and Froggy never miss a coin on EASY', phys: 'cpuPerfect' },
+    { name: 'cpuPerfect', check: 'normalRace', why: 'Foxy and Froggy never miss a coin on NORMAL', phys: 'cpuPerfect' },
   ];
 
   function run(o) {
@@ -264,8 +361,9 @@
     const t0 = Date.now();
     const quick = !!o.quick;
     const seeds = o.seeds || (quick ? [1, 2] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    const raceSeeds = quick ? [1, 2, 3, 4] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-    const opts = (name) => ({ seeds: name === 'easyRace' ? raceSeeds : seeds, quick });
+    // (the races always use all 12 labs: "sometimes" can't be told from 4)
+    const raceSeeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const opts = (name) => ({ seeds: name === 'easyRace' || name === 'normalRace' ? raceSeeds : seeds, quick });
     const results = [];
     for (const name of Object.keys(CHECKS)) {
       if (o.only && o.only !== name) continue;
@@ -280,7 +378,7 @@
         L.breakIt(b.phys || null);
         let r;
         try {
-          r = CHECKS[b.check](Object.assign(opts(b.check), { seeds: b.check === 'easyRace' ? raceSeeds : [1, 2], quick: true, labOpts: b.labOpts }));
+          r = CHECKS[b.check](Object.assign(opts(b.check), { seeds: b.check === 'easyRace' || b.check === 'normalRace' ? raceSeeds : [1, 2], quick: true, labOpts: b.labOpts }));
         } finally {
           L.breakIt(null);
         }

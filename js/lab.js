@@ -18,7 +18,11 @@
   const ZH = 0.22; // a zapper's hit radius around its beam (the orbs are drawn a bit bigger, so a touch reads as fair)
   const Y_MIN = 0.66, Y_MAX = H - 0.66; // the flyer's centre: feet on the floor, head on the ceiling
   const STEP = 1 / 120;
-  const PICK = R + 0.34; // coin pick-up distance
+  // A coin is picked up when its disc touches the flyer's body as drawn (js/flyer.js, measured in the page): from the
+  // jetpack behind him to his hands in front, his feet to his hair. What you see on screen is what you get.
+  const BODY = { back: 0.5, front: 0.55, down: 0.73, up: 0.95 };
+  const COIN_R = 0.3; // the coin's radius as drawn (js/world.js)
+  const REACH = BODY.front + COIN_R; // how far ahead a coin can be touched
   const BUCKET = 4; // zapper lookup boxes, metres of x
 
   // speed: the lab's speed at the start and at the exit. thrust / gravity in m/s², vyUp / vyDown the top speeds.
@@ -38,7 +42,8 @@
     },
   };
   // broken on purpose, for the checks that have to notice: heavy (the jet can't lift you), noClamp (no floor, ceiling
-  // or top speed), easyHard (EASY flies like NORMAL), rawdt (one big step per frame), noShield, cpuStrong
+  // or top speed), easyHard (EASY flies like NORMAL), rawdt (one big step per frame), noShield, cpuPerfect (Foxy and
+  // Froggy never miss a coin), sharedCoins (everyone races for the same coins, as in the first version)
   let broken = null;
   function phys(level) {
     const P = LEVELS[level];
@@ -259,7 +264,7 @@
     const p = lab.path;
     for (let i = 1; i < p.length - 1; i++) {
       if (p[i].x > L.length - 4 || rnd() < 0.4) continue;
-      const off = rnd() < 0.5 ? 0 : (rnd() < 0.5 ? -1 : 1) * r(0.5, 0.9);
+      const off = rnd() < 0.45 ? 0 : (rnd() < 0.5 ? -1 : 1) * r(1.3, 1.9);
       const xa = p[i].x + r(0.5, 2), xb = Math.min(p[i + 1].x - r(0.5, 2), L.length - 4);
       for (let cx = xa; cx <= xb; cx += L.coinStep) {
         const cy = clamp(pathY(lab, cx) + off, Y_MIN, Y_MAX);
@@ -370,18 +375,25 @@
   }
 
   // ---------------------------------------------------------------- the race
-  // o: { seed, level (the lab's), flyers: [{ id, cpu, level, lane, bot }] }. Humans first (they win a coin tie).
+  // o: { seed, level (the lab's), flyers: [{ id, cpu, level, lane, bot }] }.
+  // Coins: every computer flyer has its own copy of the lab's coins, so Foxy and Froggy can never take a coin from a
+  // human; the humans share theirs (two brothers race for the same coins, the ones on screen). sets[0] is the humans'.
+  // (sharedCoins, broken on purpose: everyone shares one set, closest takes it, as in the first version.)
   function race(o) {
     const lab = o.lab || generate(o.seed, o.level, o.labOpts);
+    let sets = 1;
     const flyers = o.flyers.map((d, i) => {
       const P = phys(d.level || lab.level);
       return {
+        set: d.cpu && broken !== 'sharedCoins' ? sets++ : 0,
         i, id: d.id, cpu: !!d.cpu, level: d.level || lab.level, lane: d.lane || 0, bot: d.bot || null,
         y: Y_MIN, vy: 0, hold: false, coins: 0, hearts: P.hearts, out: false, zaps: 0, blocks: 0,
         dizzy: 0, safe: 0, shield: 0, blockT: 0, streak: 0, lastCoin: -9, want: false, think: 0, best: 0,
       };
     });
-    return { lab, flyers, x: 0, ft: 0, t: 0, acc: 0, ticks: 0, phase: 'count', taken: new Uint8Array(lab.coins.length), c0: 0, events: [], finished: false, over: false, stopAt: 0 };
+    const coinSets = [];
+    for (let k = 0; k < sets; k++) coinSets.push(new Uint8Array(lab.coins.length));
+    return { lab, flyers, x: 0, ft: 0, t: 0, acc: 0, ticks: 0, phase: 'count', sets: coinSets, taken: coinSets[0], c0: 0, events: [], finished: false, over: false, stopAt: 0 };
   }
   function go(rc) {
     rc.phase = 'fly';
@@ -390,24 +402,28 @@
   // the controller Foxy and Froggy fly with (and the checks' pretend kids): aim for the safe line a little ahead,
   // wobbling round it, and look again every `react` seconds
   const BOTS = {
-    foxyEasy: { look: 0.25, kp: 2.5, react: 0.22, wob: 0.9, wobF: 0.9, bias: 0.4, chase: 0.3 },
-    froggyEasy: { look: 0.25, kp: 2.2, react: 0.26, wob: 1.0, wobF: 0.7, bias: -0.45, chase: 0.25 },
-    foxyNormal: { look: 0.12, kp: 4, react: 0.08, wob: 0.15, wobF: 1.3, bias: 0.05, chase: 0.6 },
-    froggyNormal: { look: 0.12, kp: 4, react: 0.09, wob: 0.2, wobF: 1.1, bias: -0.05, chase: 0.5 },
-    // a careful 8-year-old and a wobbly 5-year-old (checks only)
+    foxyEasy: { look: 0.25, kp: 2.3, react: 0.26, wob: 1.2, wobF: 0.6, bias: 0.45, chase: 0.3 },
+    froggyEasy: { look: 0.25, kp: 2.1, react: 0.28, wob: 1.3, wobF: 0.5, bias: -0.5, chase: 0.25 },
+    foxyNormal: { look: 0.12, kp: 4, react: 0.1, wob: 0.3, wobF: 1.3, bias: 0.05, chase: 0.45 },
+    froggyNormal: { look: 0.12, kp: 4, react: 0.11, wob: 0.35, wobF: 1.1, bias: -0.05, chase: 0.4 },
+    // pretend kids (checks only): a careful 8-year-old, a wobbly 5-year-old and a sloppier one who's slow to react
+    // and only goes for coins now and then
     careful8: { look: 0.12, kp: 4, react: 0.08, wob: 0.1, wobF: 1.7, bias: 0, chase: 1 },
+    kid8: { look: 0.15, kp: 3.5, react: 0.12, wob: 0.3, wobF: 1.2, bias: 0, chase: 0.8 },
     wobbly5: { look: 0.2, kp: 3, react: 0.18, wob: 0.5, wobF: 0.8, bias: 0, chase: 1 },
+    sloppy5: { look: 0.2, kp: 2.5, react: 0.3, wob: 0.8, wobF: 0.7, bias: 0, chase: 0.6 },
     exact: { look: 0.1, kp: 5, react: 0.05, wob: 0, wobF: 1, bias: 0, chase: 0 },
+    perfect: { look: 0.1, kp: 5, react: 0.03, wob: 0, wobF: 1, bias: 0, chase: 1 }, // broken on purpose (cpuPerfect)
   };
   // a steady pseudo-random number from the tick and the flyer (the same on every run, whatever the frame rate)
   const noise = (ft, i) => {
     const v = Math.sin(ft * 12.9898 + i * 78.233) * 43758.5453;
     return v - Math.floor(v);
   };
-  // which controller Foxy or Froggy uses on a level (cpuStrong, broken on purpose: they go all out on EASY too)
+  // which controller Foxy or Froggy uses on a level
   function cpuBot(id, level) {
-    const lv = broken === 'cpuStrong' ? 'normal' : level;
-    return id + (lv === 'easy' ? 'Easy' : 'Normal');
+    if (broken === 'cpuPerfect') return 'perfect';
+    return id + (level === 'easy' ? 'Easy' : 'Normal');
   }
   function botHold(rc, f) {
     const b = BOTS[f.bot];
@@ -419,10 +435,10 @@
       let tvy = (pathY(lab, ax + 0.5) - pathY(lab, ax - 0.5)) * v;
       if (b.chase && noise(rc.ft, f.i) < b.chase) {
         // a coin just ahead, near the line: go for it
-        const c = nextCoin(rc, rc.x + 0.5, rc.x + 3.5);
+        const c = nextCoin(rc, f, rc.x + 0.5, rc.x + 3.5);
         const off = c ? c.y - pathY(lab, c.x) : 0;
         // follow the row of coins, unless that line runs into a zapper on the way
-        if (c && Math.abs(off) < 1.0) {
+        if (c && Math.abs(off) < 2.0) {
           let ok = true;
           for (let d = 0; d <= 2.5 && ok; d += 0.5) ok = gapNear(lab, rc.x + d, pathY(lab, rc.x + d) + off) > R + ZH + 0.35;
           if (ok) ty = pathY(lab, ax) + off;
@@ -433,9 +449,14 @@
     }
     return f.want;
   }
-  function nextCoin(rc, xa, xb) {
-    const cs = rc.lab.coins;
-    for (let k = rc.c0; k < cs.length && cs[k].x <= xb; k++) if (cs[k].x >= xa && !rc.taken[k]) return cs[k];
+  // does the coin's disc touch a flyer whose body centre is at (x, y)?
+  function touches(c, x, y) {
+    const dx = c.x - x, dy = c.y - y;
+    return dx >= -BODY.back - COIN_R && dx <= BODY.front + COIN_R && dy >= -BODY.down - COIN_R && dy <= BODY.up + COIN_R;
+  }
+  function nextCoin(rc, f, xa, xb) {
+    const cs = rc.lab.coins, taken = rc.sets[f.set];
+    for (let k = rc.c0; k < cs.length && cs[k].x <= xb; k++) if (cs[k].x >= xa && !taken[k]) return cs[k];
     return null;
   }
 
@@ -479,28 +500,32 @@
         } else if (f.safe <= 0) zap(rc, f, P, z);
       }
     }
-    // coins: each one in reach goes to whoever is closest to it (a tie goes to the first flyer, a human)
+    // coins: each one goes to whoever touches it first in its set; two touching at once, the one it's further into
+    // (the bigger overlap on screen), and an exact tie to the one with fewer coins (then turn about), so nobody wins
+    // every tie on the floor
     if (flying) {
       for (let k = rc.c0; k < lab.coins.length; k++) {
         const c = lab.coins[k];
-        if (c.x > rc.x + PICK) break;
-        if (rc.taken[k]) continue;
-        let who = null, best = PICK * PICK;
-        for (const f of rc.flyers) {
-          if (f.out) continue;
-          const dx = c.x - rc.x, dy = c.y - f.y, d = dx * dx + dy * dy;
-          if (d <= best) {
-            if (who && d === best) continue;
-            best = d;
-            who = f;
+        if (c.x > rc.x + REACH) break;
+        for (let s = 0; s < rc.sets.length; s++) {
+          const taken = rc.sets[s];
+          if (taken[k]) continue;
+          let who = null, best = Infinity;
+          for (const f of rc.flyers) {
+            if (f.out || f.set !== s || !touches(c, rc.x, f.y)) continue;
+            const dy = c.y - f.y, d = -Math.min(dy + BODY.down + COIN_R, BODY.up + COIN_R - dy); // minus how far in
+            if (d < best || (d === best && (f.coins < who.coins || (f.coins === who.coins && (k + f.i) % 2 === 0)))) {
+              best = d;
+              who = f;
+            }
           }
+          if (!who) continue;
+          taken[k] = 1 + who.i;
+          who.streak = rc.t - who.lastCoin < 0.6 ? who.streak + 1 : 0;
+          who.lastCoin = rc.t;
+          who.coins++;
+          ev.push({ type: 'coin', i: who.i, k, set: s, streak: who.streak });
         }
-        if (!who) continue;
-        rc.taken[k] = 1 + who.i;
-        who.streak = rc.t - who.lastCoin < 0.6 ? who.streak + 1 : 0;
-        who.lastCoin = rc.t;
-        who.coins++;
-        ev.push({ type: 'coin', i: who.i, k, streak: who.streak });
       }
     }
     if (flying && rc.x >= lab.exitX) {
@@ -585,7 +610,7 @@
   }
 
   JP.lab = {
-    H, R, ZH, Y_MIN, Y_MAX, STEP, PICK, LEVELS, BOTS,
+    H, R, ZH, Y_MIN, Y_MAX, STEP, BODY, COIN_R, LEVELS, BOTS, touches,
     rng, generate, solve, pathY, speedAt, ends, hitZap, zapGap, lineGap, physStep, phys,
     race, go, step, tick, shield, treat, places, botHold, cpuBot,
     breakIt(what) { broken = what || null; },

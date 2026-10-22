@@ -49,14 +49,22 @@
   let paused = false;
   let rc = null, models = [], humans = [], demo = true;
   let countT = 0, countShown = 0, endT = 0;
-  let camX = 0, camY = L.H / 2, camZoom = 1, camTarget = null;
+  let camX = 0, camY = L.H / 2, camZoom = 1, camLead = 0.3, camTarget = null;
   let buddy = null, hfT = 0, hfSprite = null, treatSprite = null;
   let finishPlan = null, results = null;
   const forced = [false, false];
   const keyHold = { p0: new Set(), p1: new Set() };
   const touches = new Map(); // pointerId -> player
   const puffT = [0, 0, 0], wasHold = [false, false, false];
-  const nozzle = [new THREE.Vector3(), new THREE.Vector3()];
+  const nozzle = [new THREE.Vector3(), new THREE.Vector3()], evAt = new THREE.Vector3();
+
+  // How deep each flyer flies. The human is in the front plane, where his coins are drawn (js/world.js): what touches
+  // him on screen touches him in the rules. With two players the brothers share that plane (a hair apart, so they
+  // don't flicker into each other); Foxy and Froggy fly further back, behind the coins, which aren't theirs.
+  function laneZ(f) {
+    if (humans.length === 2) return f.i === 0 ? 0.06 : -0.06;
+    return f.cpu ? (f.id === 'foxy' ? -0.8 : -1.6) : 0;
+  }
 
   // ---------------------------------------------------------------- toasts and the count
   function toast(text, cls) {
@@ -103,7 +111,7 @@
     for (const m of models) W.scene.remove(m.root);
     models = rc.flyers.map((f) => {
       // name tags only with 2 players (Foxy and Froggy wear their faces); side by side, so they don't sit on top of each other
-      const m = F.make(f.id, { tag: humans.length === 2 });
+      const m = F.make(f.id, { tag: humans.length === 2, badge: f.cpu ? (f.id === 'foxy' ? '🦊' : '🐸') : null, badgeUp: f.id === 'froggy' ? 0.75 : 0.3 });
       if (m.tag) m.tag.position.x = f.lane ? 0.5 : -0.5;
       W.scene.add(m.root);
       return m;
@@ -111,7 +119,8 @@
     W.setLab(lab);
     removeBuddy();
     finishPlan = null;
-    camX = rc.x + 3;
+    camX = rc.x;
+    camLead = 0.3;
     camZoom = 1;
     camY = L.H / 2;
     camTarget = null;
@@ -377,7 +386,7 @@
         L.shield(rc, 0, SHIELD_S);
         toast(`${NAMES[b.id]} SAYS: SHIELD!`, 'good');
         SFX.shield();
-        W.sparkle(rc.x, meY, W.LANES[me.lane]);
+        W.sparkle(rc.x, meY, laneZ(me));
         m.airPose(null);
       }
     } else if (b.phase === 'shield') {
@@ -418,14 +427,14 @@
     toast('✋ HIGH FIVE!', 'good');
     SFX.hi5();
     const a = rc.flyers[0], b = rc.flyers[1];
-    W.sparkle(rc.x + 0.4, (a.y + b.y) / 2, -0.6);
+    W.sparkle(rc.x + 0.4, (a.y + b.y) / 2, 0.2);
   }
   function updateHighFive(dt) {
     if (hfT <= 0) return;
     hfT -= dt;
     const a = rc.flyers[0], b = rc.flyers[1];
     if (hfSprite) {
-      hfSprite.position.set(rc.x + 0.55, (a.y + b.y) / 2 + 0.3, -0.5);
+      hfSprite.position.set(rc.x + 0.55, (a.y + b.y) / 2 + 0.3, 0.2);
       hfSprite.scale.setScalar(0.7 + Math.sin(Math.min(1, (1 - hfT) * 3) * Math.PI) * 0.3);
     }
     if (hfT <= 0) {
@@ -439,16 +448,16 @@
   function handleEvents() {
     for (const ev of rc.events) {
       const f = ev.i !== undefined ? rc.flyers[ev.i] : null;
-      const z = f ? W.LANES[f.lane] : 0;
+      const at = f ? W.lineUp(rc.x, f.y, laneZ(f), evAt) : null, z = f ? at.z : 0;
       if (ev.type === 'coin') {
-        W.coinBurst(rc.x, f.y, z);
+        W.coinBurst(at.x, at.y, z);
         if (demo) continue;
         if (!f.cpu) {
           S.coin(ev.streak);
           if (ev.streak && ev.streak % 10 === 9) toast(`COIN STREAK ×${ev.streak + 1}!`);
         }
       } else if (ev.type === 'zap') {
-        W.zapBurst(rc.x, f.y, z);
+        W.zapBurst(at.x, at.y, z);
         if (demo) continue;
         SFX.zap();
         if (f.cpu) continue;
@@ -456,7 +465,7 @@
         const P = L.LEVELS[f.level];
         toast(P.hearts ? `⚡ ${who}BZZT! ❤️ −1` : ev.lost ? `⚡ ${who}BZZT! −${ev.lost} 🪙` : `⚡ ${who}BZZT!`, 'zap');
       } else if (ev.type === 'block') {
-        W.sparkle(rc.x + 0.4, f.y, z);
+        W.sparkle(at.x + 0.4, at.y, z);
         if (demo) continue;
         SFX.block();
         toast('🛡️ SHIELD BLOCK!', 'good');
@@ -492,10 +501,14 @@
     finishPlan = order.map((f, k) => {
       const st = steps[Math.min(k, 2)];
       const sx = k > 2 ? st.x + 1.6 : st.x;
-      return { f, m: models[f.i], from: { x: rc.x, y: f.y, z: W.LANES[f.lane] }, to: { x: sx, y: st.top + feet, z: -1.15 }, winner: f.place === 1, done: false };
+      const at = models[f.i].root.position;
+      return { f, m: models[f.i], from: { x: at.x, y: at.y, z: at.z }, to: { x: sx, y: st.top + feet, z: -1.15 }, winner: f.place === 1, done: false };
     });
     camTarget = { x: rc.lab.exitX + 8, y: 2.6, zoom: 1.45 };
-    for (const m of models) if (m.tag) m.tag.position.set(0, m.headTop + 0.4, 0);
+    for (const m of models) {
+      if (m.tag) m.tag.position.set(0, m.headTop + 0.4, 0);
+      if (m.badge) m.badge.visible = false;
+    }
   }
   function updateFinish(dt) {
     endT += dt;
@@ -631,11 +644,32 @@
         if (endT > 2.2) showResults(true);
       }
     }
+    // camera: right beside the flyers, who show a third of the way in from the left (js/world.js frame); at the exit
+    // it glides over to the podium
+    if (camTarget) {
+      const k = damp(2.2, dt);
+      camX += (camTarget.x - camX) * k;
+      camY += (camTarget.y - camY) * k;
+      camZoom += (camTarget.zoom - camZoom) * k;
+      camLead += (0.5 - camLead) * k;
+    } else {
+      camX = rc.x;
+      camY = L.H / 2;
+      camZoom = 1;
+      camLead = 0.3;
+    }
+    // room for the HUD above the ceiling and the buttons under the floor while flying
+    const hud = mode === 'count' || mode === 'fly' || mode === 'zapped', short = window.innerHeight < 500;
+    W.frame(camX, camTarget ? camY : null, camZoom, hud ? { top: short ? 56 : 104, bottom: short ? 50 : 66 } : { top: 30, bottom: 30 }, camLead);
     // flyers
     if (mode !== 'finish' && !(mode === 'over' && finishPlan)) {
       rc.flyers.forEach((f, i) => {
         const m = models[i];
-        m.root.position.set(rc.x, f.y, W.LANES[f.lane]);
+        // drawn on the camera's sightline through where he is in the human's plane: everyone at the same x and height
+        // shows at the same place on screen, Foxy and Froggy just smaller, further back
+        W.lineUp(rc.x, f.y, laneZ(f), m.root.position);
+        // Foxy's and Froggy's little faces only while they're hidden behind the human (level with him)
+        if (m.badge) m.badge.visible = !f.out && Math.abs(f.y - rc.flyers[0].y) < 0.6;
         // a name tag near the ceiling would hide behind it: it goes under his feet instead
         if (m.tag) m.tag.position.y = f.y + m.headTop + 0.4 > L.H - 0.2 ? -m.headTop - 0.35 : m.headTop + 0.4;
         m.update(paused ? 0 : dt, { y: f.y, vy: f.vy, hold: f.hold, ground: f.y <= L.Y_MIN + 1e-6 && !f.hold, dizzy: f.dizzy, safe: f.safe, shield: f.shield, out: f.out });
@@ -652,20 +686,6 @@
         if (i < 3) wasHold[i] = f.hold;
       });
     } else if (mode === 'over' && finishPlan) for (const p of finishPlan) p.m.update(dt, {});
-    // camera: the flyers a third of the way in from the left, the whole lab height in view
-    const vw = W.visibleWidth();
-    let tx = rc.x + vw * 0.2, tz = 1;
-    if (camTarget) {
-      tx = camTarget.x;
-      tz = camTarget.zoom;
-      camY += (camTarget.y - camY) * damp(2.2, dt);
-    } else camY = L.H / 2;
-    const k = camTarget ? damp(2.2, dt) : damp(10, dt);
-    camX += (tx - camX) * (mode === 'title' && Math.abs(tx - camX) > 20 ? 1 : k);
-    camZoom += (tz - camZoom) * k;
-    // room for the HUD above the ceiling and the buttons under the floor while flying
-    const hud = mode === 'count' || mode === 'fly' || mode === 'zapped', short = window.innerHeight < 500;
-    W.frame(camX, camTarget ? camY : null, camZoom, hud ? { top: short ? 56 : 104, bottom: short ? 50 : 66 } : { top: 30, bottom: 30 });
     W.update(paused ? 0 : dt, { t: rc.t, taken: rc.taken });
     if (mode === 'fly' || mode === 'count' || mode === 'finish' || mode === 'zapped') updateHud();
   }
@@ -746,11 +766,11 @@
       play(o.seed);
       return info();
     },
-    // run the game for this many seconds right now (60 steps a second) and draw it
-    step(sec) {
+    // run the game for this many seconds right now (60 steps a second) and draw it (draw = false: only move the camera)
+    step(sec, draw) {
       const n = Math.max(1, Math.round((sec || 0) * 60));
       for (let i = 0; i < n; i++) update(1 / 60);
-      W.render();
+      if (draw !== false) W.render();
       return info();
     },
     hold(i, on) { forced[i] = !!on; },
@@ -771,6 +791,8 @@
     check(o) { return JP.checks.run(Object.assign({ quick: true }, o)); },
     prove() { return JP.checks.run({ quick: true, prove: true }); },
     get race() { return rc; },
+    // the flyers' 3D models, in the same order as race.flyers (for checks that look at what's drawn)
+    get roots() { return models.map((m) => m.root); },
     get save() { return save; },
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });

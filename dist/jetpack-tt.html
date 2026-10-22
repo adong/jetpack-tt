@@ -1895,7 +1895,11 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
   const ZH = 0.22; // a zapper's hit radius around its beam (the orbs are drawn a bit bigger, so a touch reads as fair)
   const Y_MIN = 0.66, Y_MAX = H - 0.66; // the flyer's centre: feet on the floor, head on the ceiling
   const STEP = 1 / 120;
-  const PICK = R + 0.34; // coin pick-up distance
+  // A coin is picked up when its disc touches the flyer's body as drawn (js/flyer.js, measured in the page): from the
+  // jetpack behind him to his hands in front, his feet to his hair. What you see on screen is what you get.
+  const BODY = { back: 0.5, front: 0.55, down: 0.73, up: 0.95 };
+  const COIN_R = 0.3; // the coin's radius as drawn (js/world.js)
+  const REACH = BODY.front + COIN_R; // how far ahead a coin can be touched
   const BUCKET = 4; // zapper lookup boxes, metres of x
 
   // speed: the lab's speed at the start and at the exit. thrust / gravity in m/s², vyUp / vyDown the top speeds.
@@ -1915,7 +1919,8 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     },
   };
   // broken on purpose, for the checks that have to notice: heavy (the jet can't lift you), noClamp (no floor, ceiling
-  // or top speed), easyHard (EASY flies like NORMAL), rawdt (one big step per frame), noShield, cpuStrong
+  // or top speed), easyHard (EASY flies like NORMAL), rawdt (one big step per frame), noShield, cpuPerfect (Foxy and
+  // Froggy never miss a coin), sharedCoins (everyone races for the same coins, as in the first version)
   let broken = null;
   function phys(level) {
     const P = LEVELS[level];
@@ -2136,7 +2141,7 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     const p = lab.path;
     for (let i = 1; i < p.length - 1; i++) {
       if (p[i].x > L.length - 4 || rnd() < 0.4) continue;
-      const off = rnd() < 0.5 ? 0 : (rnd() < 0.5 ? -1 : 1) * r(0.5, 0.9);
+      const off = rnd() < 0.45 ? 0 : (rnd() < 0.5 ? -1 : 1) * r(1.3, 1.9);
       const xa = p[i].x + r(0.5, 2), xb = Math.min(p[i + 1].x - r(0.5, 2), L.length - 4);
       for (let cx = xa; cx <= xb; cx += L.coinStep) {
         const cy = clamp(pathY(lab, cx) + off, Y_MIN, Y_MAX);
@@ -2247,18 +2252,25 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
   }
 
   // ---------------------------------------------------------------- the race
-  // o: { seed, level (the lab's), flyers: [{ id, cpu, level, lane, bot }] }. Humans first (they win a coin tie).
+  // o: { seed, level (the lab's), flyers: [{ id, cpu, level, lane, bot }] }.
+  // Coins: every computer flyer has its own copy of the lab's coins, so Foxy and Froggy can never take a coin from a
+  // human; the humans share theirs (two brothers race for the same coins, the ones on screen). sets[0] is the humans'.
+  // (sharedCoins, broken on purpose: everyone shares one set, closest takes it, as in the first version.)
   function race(o) {
     const lab = o.lab || generate(o.seed, o.level, o.labOpts);
+    let sets = 1;
     const flyers = o.flyers.map((d, i) => {
       const P = phys(d.level || lab.level);
       return {
+        set: d.cpu && broken !== 'sharedCoins' ? sets++ : 0,
         i, id: d.id, cpu: !!d.cpu, level: d.level || lab.level, lane: d.lane || 0, bot: d.bot || null,
         y: Y_MIN, vy: 0, hold: false, coins: 0, hearts: P.hearts, out: false, zaps: 0, blocks: 0,
         dizzy: 0, safe: 0, shield: 0, blockT: 0, streak: 0, lastCoin: -9, want: false, think: 0, best: 0,
       };
     });
-    return { lab, flyers, x: 0, ft: 0, t: 0, acc: 0, ticks: 0, phase: 'count', taken: new Uint8Array(lab.coins.length), c0: 0, events: [], finished: false, over: false, stopAt: 0 };
+    const coinSets = [];
+    for (let k = 0; k < sets; k++) coinSets.push(new Uint8Array(lab.coins.length));
+    return { lab, flyers, x: 0, ft: 0, t: 0, acc: 0, ticks: 0, phase: 'count', sets: coinSets, taken: coinSets[0], c0: 0, events: [], finished: false, over: false, stopAt: 0 };
   }
   function go(rc) {
     rc.phase = 'fly';
@@ -2267,24 +2279,28 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
   // the controller Foxy and Froggy fly with (and the checks' pretend kids): aim for the safe line a little ahead,
   // wobbling round it, and look again every `react` seconds
   const BOTS = {
-    foxyEasy: { look: 0.25, kp: 2.5, react: 0.22, wob: 0.9, wobF: 0.9, bias: 0.4, chase: 0.3 },
-    froggyEasy: { look: 0.25, kp: 2.2, react: 0.26, wob: 1.0, wobF: 0.7, bias: -0.45, chase: 0.25 },
-    foxyNormal: { look: 0.12, kp: 4, react: 0.08, wob: 0.15, wobF: 1.3, bias: 0.05, chase: 0.6 },
-    froggyNormal: { look: 0.12, kp: 4, react: 0.09, wob: 0.2, wobF: 1.1, bias: -0.05, chase: 0.5 },
-    // a careful 8-year-old and a wobbly 5-year-old (checks only)
+    foxyEasy: { look: 0.25, kp: 2.3, react: 0.26, wob: 1.2, wobF: 0.6, bias: 0.45, chase: 0.3 },
+    froggyEasy: { look: 0.25, kp: 2.1, react: 0.28, wob: 1.3, wobF: 0.5, bias: -0.5, chase: 0.25 },
+    foxyNormal: { look: 0.12, kp: 4, react: 0.1, wob: 0.3, wobF: 1.3, bias: 0.05, chase: 0.45 },
+    froggyNormal: { look: 0.12, kp: 4, react: 0.11, wob: 0.35, wobF: 1.1, bias: -0.05, chase: 0.4 },
+    // pretend kids (checks only): a careful 8-year-old, a wobbly 5-year-old and a sloppier one who's slow to react
+    // and only goes for coins now and then
     careful8: { look: 0.12, kp: 4, react: 0.08, wob: 0.1, wobF: 1.7, bias: 0, chase: 1 },
+    kid8: { look: 0.15, kp: 3.5, react: 0.12, wob: 0.3, wobF: 1.2, bias: 0, chase: 0.8 },
     wobbly5: { look: 0.2, kp: 3, react: 0.18, wob: 0.5, wobF: 0.8, bias: 0, chase: 1 },
+    sloppy5: { look: 0.2, kp: 2.5, react: 0.3, wob: 0.8, wobF: 0.7, bias: 0, chase: 0.6 },
     exact: { look: 0.1, kp: 5, react: 0.05, wob: 0, wobF: 1, bias: 0, chase: 0 },
+    perfect: { look: 0.1, kp: 5, react: 0.03, wob: 0, wobF: 1, bias: 0, chase: 1 }, // broken on purpose (cpuPerfect)
   };
   // a steady pseudo-random number from the tick and the flyer (the same on every run, whatever the frame rate)
   const noise = (ft, i) => {
     const v = Math.sin(ft * 12.9898 + i * 78.233) * 43758.5453;
     return v - Math.floor(v);
   };
-  // which controller Foxy or Froggy uses on a level (cpuStrong, broken on purpose: they go all out on EASY too)
+  // which controller Foxy or Froggy uses on a level
   function cpuBot(id, level) {
-    const lv = broken === 'cpuStrong' ? 'normal' : level;
-    return id + (lv === 'easy' ? 'Easy' : 'Normal');
+    if (broken === 'cpuPerfect') return 'perfect';
+    return id + (level === 'easy' ? 'Easy' : 'Normal');
   }
   function botHold(rc, f) {
     const b = BOTS[f.bot];
@@ -2296,10 +2312,10 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
       let tvy = (pathY(lab, ax + 0.5) - pathY(lab, ax - 0.5)) * v;
       if (b.chase && noise(rc.ft, f.i) < b.chase) {
         // a coin just ahead, near the line: go for it
-        const c = nextCoin(rc, rc.x + 0.5, rc.x + 3.5);
+        const c = nextCoin(rc, f, rc.x + 0.5, rc.x + 3.5);
         const off = c ? c.y - pathY(lab, c.x) : 0;
         // follow the row of coins, unless that line runs into a zapper on the way
-        if (c && Math.abs(off) < 1.0) {
+        if (c && Math.abs(off) < 2.0) {
           let ok = true;
           for (let d = 0; d <= 2.5 && ok; d += 0.5) ok = gapNear(lab, rc.x + d, pathY(lab, rc.x + d) + off) > R + ZH + 0.35;
           if (ok) ty = pathY(lab, ax) + off;
@@ -2310,9 +2326,14 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     }
     return f.want;
   }
-  function nextCoin(rc, xa, xb) {
-    const cs = rc.lab.coins;
-    for (let k = rc.c0; k < cs.length && cs[k].x <= xb; k++) if (cs[k].x >= xa && !rc.taken[k]) return cs[k];
+  // does the coin's disc touch a flyer whose body centre is at (x, y)?
+  function touches(c, x, y) {
+    const dx = c.x - x, dy = c.y - y;
+    return dx >= -BODY.back - COIN_R && dx <= BODY.front + COIN_R && dy >= -BODY.down - COIN_R && dy <= BODY.up + COIN_R;
+  }
+  function nextCoin(rc, f, xa, xb) {
+    const cs = rc.lab.coins, taken = rc.sets[f.set];
+    for (let k = rc.c0; k < cs.length && cs[k].x <= xb; k++) if (cs[k].x >= xa && !taken[k]) return cs[k];
     return null;
   }
 
@@ -2356,28 +2377,32 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
         } else if (f.safe <= 0) zap(rc, f, P, z);
       }
     }
-    // coins: each one in reach goes to whoever is closest to it (a tie goes to the first flyer, a human)
+    // coins: each one goes to whoever touches it first in its set; two touching at once, the one it's further into
+    // (the bigger overlap on screen), and an exact tie to the one with fewer coins (then turn about), so nobody wins
+    // every tie on the floor
     if (flying) {
       for (let k = rc.c0; k < lab.coins.length; k++) {
         const c = lab.coins[k];
-        if (c.x > rc.x + PICK) break;
-        if (rc.taken[k]) continue;
-        let who = null, best = PICK * PICK;
-        for (const f of rc.flyers) {
-          if (f.out) continue;
-          const dx = c.x - rc.x, dy = c.y - f.y, d = dx * dx + dy * dy;
-          if (d <= best) {
-            if (who && d === best) continue;
-            best = d;
-            who = f;
+        if (c.x > rc.x + REACH) break;
+        for (let s = 0; s < rc.sets.length; s++) {
+          const taken = rc.sets[s];
+          if (taken[k]) continue;
+          let who = null, best = Infinity;
+          for (const f of rc.flyers) {
+            if (f.out || f.set !== s || !touches(c, rc.x, f.y)) continue;
+            const dy = c.y - f.y, d = -Math.min(dy + BODY.down + COIN_R, BODY.up + COIN_R - dy); // minus how far in
+            if (d < best || (d === best && (f.coins < who.coins || (f.coins === who.coins && (k + f.i) % 2 === 0)))) {
+              best = d;
+              who = f;
+            }
           }
+          if (!who) continue;
+          taken[k] = 1 + who.i;
+          who.streak = rc.t - who.lastCoin < 0.6 ? who.streak + 1 : 0;
+          who.lastCoin = rc.t;
+          who.coins++;
+          ev.push({ type: 'coin', i: who.i, k, set: s, streak: who.streak });
         }
-        if (!who) continue;
-        rc.taken[k] = 1 + who.i;
-        who.streak = rc.t - who.lastCoin < 0.6 ? who.streak + 1 : 0;
-        who.lastCoin = rc.t;
-        who.coins++;
-        ev.push({ type: 'coin', i: who.i, k, streak: who.streak });
       }
     }
     if (flying && rc.x >= lab.exitX) {
@@ -2462,7 +2487,7 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
   }
 
   JP.lab = {
-    H, R, ZH, Y_MIN, Y_MAX, STEP, PICK, LEVELS, BOTS,
+    H, R, ZH, Y_MIN, Y_MAX, STEP, BODY, COIN_R, LEVELS, BOTS, touches,
     rng, generate, solve, pathY, speedAt, ends, hitZap, zapGap, lineGap, physStep, phys,
     race, go, step, tick, shield, treat, places, botHold, cpuBot,
     breakIt(what) { broken = what || null; },
@@ -2484,7 +2509,12 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
    - bounds, frames, feel: the physics. Nobody leaves the lab or goes faster than the top speeds; 30, 60, 144 and a
      jumpy frame rate give exactly the same flight; EASY climbs and falls more gently than NORMAL.
    - zaps: hits are where the beams are, EASY never knocks you out, NORMAL does after 3, the shield blocks.
-   - easyRace: on EASY a wobbly 5-year-old beats Foxy and Froggy most of the time. */
+   - coins: a coin is yours when its disc touches your body as drawn (and not 2 cm before); Foxy and Froggy each
+     collect their own copy of the coins, so flying your exact line they never take one of yours; two brothers on the
+     same line share the coins evenly, and two equally good brothers each win their share of races.
+   - easyRace: on EASY a wobbly 5-year-old beats Foxy and Froggy most of the time, and so does a sloppier one.
+   - normalRace: on NORMAL a careful 8-year-old beats them sometimes: not never, not always. (tools/fair.js checks the
+     same things in the real page, flying with keys.) */
 (function () {
   'use strict';
   const JP = (window.JP = window.JP || {});
@@ -2685,24 +2715,114 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
       return { stat: `hits within 1 cm of the beams and orbs, spinner on time; EASY: ${e.f.zaps} zaps, never out; NORMAL: out after ${n.f.zaps}; shield: ${sh.flyers[0].blocks} block, 0 zaps`, problems };
     },
 
+    coins() {
+      const problems = [];
+      const lab = L.generate(4, 'easy');
+      // a: the touch shape, one coin at a time, 2 cm inside and outside each edge of the body (+ the coin's radius)
+      const edge = (dy, dx) => {
+        const one = { level: 'easy', exitX: 60, path: lab.path, zaps: [], coins: [{ x: 20 + (dx || 0), y: 3 + dy }] };
+        reindex(one);
+        const rc = L.race({ lab: one, flyers: [{ id: 'teddy' }] });
+        L.go(rc);
+        for (let n = 0; n < 2400 && rc.phase !== 'done'; n++) {
+          rc.flyers[0].y = 3;
+          rc.flyers[0].vy = 0;
+          L.step(rc, 1 / 60, () => false);
+        }
+        return rc.flyers[0].coins;
+      };
+      const B = L.BODY, C = L.COIN_R;
+      const cases = [['above the hair', B.up + C], ['below the feet', -B.down - C]];
+      for (const [where, dy] of cases) {
+        if (edge(dy - Math.sign(dy) * 0.02) !== 1) problems.push(`a coin just touching ${where} was not collected`);
+        if (edge(dy + Math.sign(dy) * 0.02) !== 0) problems.push(`a coin 2 cm ${where} was collected`);
+      }
+      // b: Foxy and Froggy fly exactly his line: he still gets every coin he'd get alone, and they get their own
+      let alone = 0, withThem = 0, theirs = 0;
+      for (const seed of [1, 2, 3]) {
+        const fly = (others) => {
+          const fl = [{ id: 'teddy', bot: 'exact' }];
+          if (others) fl.push({ id: 'foxy', cpu: true, bot: 'exact' }, { id: 'froggy', cpu: true, bot: 'exact' });
+          const rc = L.race({ seed, level: 'easy', flyers: fl });
+          L.go(rc);
+          while (rc.phase !== 'done') L.step(rc, 1 / 60, () => false);
+          return rc;
+        };
+        alone += fly(false).flyers[0].coins;
+        const rc = fly(true);
+        withThem += rc.flyers[0].coins;
+        theirs += rc.flyers[1].coins + rc.flyers[2].coins;
+        for (let k = 0; k < rc.taken.length; k++) if (rc.taken[k] > 1) { problems.push(`lab ${seed}: ${rc.flyers[rc.taken[k] - 1].id} took one of the human's coins`); break; }
+      }
+      if (withThem !== alone) problems.push(`flying with Foxy and Froggy on his exact line he got ${withThem} coins, alone ${alone}`);
+      if (theirs !== 2 * alone) problems.push(`Foxy and Froggy on the same line got ${theirs} coins between them (should be ${2 * alone})`);
+      // c: two brothers on the very same line share the coins; two equally good brothers each win races
+      let a = 0, b = 0, solo = 0;
+      for (const seed of [1, 2]) {
+        const rc = L.race({ seed, level: 'easy', flyers: [{ id: 'teddy', bot: 'exact' }, { id: 'tommy', bot: 'exact' }] });
+        L.go(rc);
+        while (rc.phase !== 'done') L.step(rc, 1 / 60, () => false);
+        a += rc.flyers[0].coins;
+        b += rc.flyers[1].coins;
+        const s1 = L.race({ seed, level: 'easy', flyers: [{ id: 'teddy', bot: 'exact' }] });
+        L.go(s1);
+        while (s1.phase !== 'done') L.step(s1, 1 / 60, () => false);
+        solo += s1.flyers[0].coins;
+      }
+      if (a + b !== solo || Math.abs(a - b) > 2) problems.push(`two brothers on one line got ${a} and ${b} coins (alone: ${solo})`);
+      let tw = 0, mw = 0;
+      for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+        const rc = L.race({ seed, level: 'easy', flyers: [{ id: 'teddy', bot: 'wobbly5' }, { id: 'tommy', bot: 'wobbly5' }] });
+        L.go(rc);
+        while (rc.phase !== 'done') L.step(rc, 1 / 60, () => false);
+        L.places(rc);
+        if (rc.flyers[0].place === 1) tw++;
+        if (rc.flyers[1].place === 1) mw++;
+      }
+      if (tw < 2 || mw < 2) problems.push(`two equally good brothers: Teddy won ${tw}, Tommy ${mw} of 8`);
+      return { stat: `touch edges right to 2 cm; on his exact line he gets ${withThem} coins with Foxy and Froggy, ${alone} alone, and they get their own ${theirs}; brothers on one line ${a} / ${b}; equal brothers won ${tw} / ${mw} of 8`, problems };
+    },
+
     easyRace(o) {
       const problems = [];
-      let wins = 0, races = 0, kidCoins = 0, cpuCoins = 0;
+      const out = {};
+      for (const kid of ['wobbly5', 'sloppy5']) {
+        let wins = 0, races = 0, kidCoins = 0, cpuCoins = 0;
+        for (const seed of o.seeds) {
+          const rc = L.race({ seed, level: 'easy', flyers: [{ id: 'tommy', bot: kid }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'easy') }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'easy') }] });
+          L.go(rc);
+          for (let n = 0; n < 200000 && rc.phase !== 'done'; n++) L.step(rc, 1 / 60, () => false);
+          races++;
+          if (!rc.finished) problems.push(`EASY lab ${seed}: the race didn't reach the exit`);
+          L.places(rc);
+          if (rc.flyers[0].place === 1) wins++;
+          kidCoins += rc.flyers[0].coins;
+          cpuCoins += (rc.flyers[1].coins + rc.flyers[2].coins) / 2;
+          if (rc.flyers.some((f) => f.out)) problems.push(`EASY lab ${seed}: someone got knocked out`);
+        }
+        out[kid] = { wins, races, kid: Math.round(kidCoins / races), cpu: Math.round(cpuCoins / races) };
+        if (wins < races * 0.7) problems.push(`the ${kid === 'wobbly5' ? 'wobbly' : 'sloppy'} 5-year-old won only ${wins} of ${races} EASY races against Foxy and Froggy`);
+      }
+      const w = out.wobbly5, s = out.sloppy5;
+      return { stat: `wobbly 5-year-old won ${w.wins} of ${w.races} EASY races (${w.kid} coins a race; Foxy and Froggy ${w.cpu}), a sloppier one ${s.wins} of ${s.races} (${s.kid})`, problems };
+    },
+
+    normalRace(o) {
+      const problems = [];
+      let wins = 0, races = 0, kidCoins = 0, cpuCoins = 0, outs = 0;
       for (const seed of o.seeds) {
-        const rc = L.race({ seed, level: 'easy', flyers: [{ id: 'tommy', bot: 'wobbly5' }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'easy') }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'easy') }] });
+        const rc = L.race({ seed, level: 'normal', flyers: [{ id: 'teddy', bot: 'careful8' }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'normal') }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'normal') }] });
         L.go(rc);
         for (let n = 0; n < 200000 && rc.phase !== 'done'; n++) L.step(rc, 1 / 60, () => false);
         races++;
-        if (!rc.finished) problems.push(`EASY lab ${seed}: the race didn't reach the exit`);
-        const order = L.places(rc);
-        if (rc.flyers[0].place === 1) wins++;
+        L.places(rc);
+        if (rc.finished && rc.flyers[0].place === 1 && rc.flyers.filter((f) => f.place === 1).length === 1) wins++;
+        if (rc.flyers[0].out) outs++;
         kidCoins += rc.flyers[0].coins;
         cpuCoins += (rc.flyers[1].coins + rc.flyers[2].coins) / 2;
-        if (rc.flyers.some((f) => f.out)) problems.push(`EASY lab ${seed}: someone got knocked out`);
-        void order;
       }
-      if (wins < races * 0.7) problems.push(`the wobbly 5-year-old won only ${wins} of ${races} EASY races against Foxy and Froggy`);
-      return { stat: `wobbly 5-year-old won ${wins} of ${races} EASY races (${Math.round(kidCoins / races)} coins a race; Foxy and Froggy ${Math.round(cpuCoins / races)})`, problems };
+      if (wins < Math.max(1, races * 0.2) || wins > races * 0.85) problems.push(`the careful 8-year-old won ${wins} of ${races} NORMAL races (should be sometimes: not never, not always)`);
+      return { stat: `careful 8-year-old won ${wins} of ${races} NORMAL races (${Math.round(kidCoins / races)} coins a race; Foxy and Froggy ${Math.round(cpuCoins / races)}; out of hearts ${outs} times)`, problems };
     },
   };
   // the zaps check builds its own little lab: rebuild the lookup boxes after swapping the zappers in
@@ -2730,7 +2850,9 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     { name: 'rawdt', check: 'frames', why: 'one physics step per frame', phys: 'rawdt' },
     { name: 'easyHard', check: 'feel', why: 'EASY flies like NORMAL', phys: 'easyHard' },
     { name: 'noShield', check: 'zaps', why: 'the shield does nothing', phys: 'noShield' },
-    { name: 'cpuStrong', check: 'easyRace', why: 'Foxy and Froggy go all out on EASY', phys: 'cpuStrong' },
+    { name: 'sharedCoins', check: 'coins', why: 'Foxy and Froggy race for the human\'s coins', phys: 'sharedCoins' },
+    { name: 'cpuPerfect', check: 'easyRace', why: 'Foxy and Froggy never miss a coin on EASY', phys: 'cpuPerfect' },
+    { name: 'cpuPerfect', check: 'normalRace', why: 'Foxy and Froggy never miss a coin on NORMAL', phys: 'cpuPerfect' },
   ];
 
   function run(o) {
@@ -2738,8 +2860,9 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     const t0 = Date.now();
     const quick = !!o.quick;
     const seeds = o.seeds || (quick ? [1, 2] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    const raceSeeds = quick ? [1, 2, 3, 4] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-    const opts = (name) => ({ seeds: name === 'easyRace' ? raceSeeds : seeds, quick });
+    // (the races always use all 12 labs: "sometimes" can't be told from 4)
+    const raceSeeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const opts = (name) => ({ seeds: name === 'easyRace' || name === 'normalRace' ? raceSeeds : seeds, quick });
     const results = [];
     for (const name of Object.keys(CHECKS)) {
       if (o.only && o.only !== name) continue;
@@ -2754,7 +2877,7 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
         L.breakIt(b.phys || null);
         let r;
         try {
-          r = CHECKS[b.check](Object.assign(opts(b.check), { seeds: b.check === 'easyRace' ? raceSeeds : [1, 2], quick: true, labOpts: b.labOpts }));
+          r = CHECKS[b.check](Object.assign(opts(b.check), { seeds: b.check === 'easyRace' || b.check === 'normalRace' ? raceSeeds : [1, 2], quick: true, labOpts: b.labOpts }));
         } finally {
           L.breakIt(null);
         }
@@ -2773,16 +2896,19 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
    the zappers (two emitter rods and crackling beams across the whole depth of the corridor, some spinning), the coins,
    the exit door with its landing pad and podium, and the sparks, smoke and confetti.
    Everything long is a pool that follows the camera: the lab is 420-720 m long but only ~45 m of it is ever built.
-   Flyers live in their own lanes (LANES, z) so two or three of them can share a height without hiding each other. */
+   The human flies in the front plane (z = 0) and his coins are drawn in that same plane, so a coin touches him on
+   screen exactly when it touches him in the rules. Foxy and Froggy fly further back (js/game.js picks the depths).
+   The camera stands right beside the flyers (same x) and looks straight across with an off-centre view, so everyone
+   at the same x is at the same place across the screen, whatever their depth: nobody looks ahead when they're level. */
 (function () {
   'use strict';
   const JP = (window.JP = window.JP || {});
   const T = THREE, G = Kit.gfx, LB = JP.lab;
   const H = LB.H;
-  const LANES = [0, -1.15, -2.3];
-  const ZAP_BACK = -3.1, ZAP_FRONT = 0.8;
+  const PLANE_Z = 0; // the human's plane: his coins, the brightest beam and the zapper orbs are drawn here
+  const ZAP_BACK = -3.1, ZAP_FRONT = 0.45;
   const WALL_Z = -4.3, FRONT_Z = 1.6;
-  const COIN_Z = -1.15;
+  const COIN_Z = PLANE_Z;
   const AHEAD = 34, BEHIND = 16; // how much of the lab is built around the camera
 
   let renderer, scene, camera, sun;
@@ -3182,9 +3308,10 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
       const e = new T.Group();
       const rod = G.mesh(new T.CylinderGeometry(0.17, 0.17, depth, 14), rodMat, 0, 0, zc, e);
       rod.rotation.x = Math.PI / 2;
-      G.mesh(new T.SphereGeometry(0.3, 18, 12), capMat, 0, 0, ZAP_FRONT, e);
-      G.mesh(new T.SphereGeometry(0.14, 12, 8), coreMat, 0, 0, ZAP_FRONT + 0.22, e, false);
-      for (const z of [ZAP_BACK + 0.4, zc, ZAP_FRONT - 0.5]) {
+      // the orb in the human's plane: what he can touch is exactly where he sees it
+      G.mesh(new T.SphereGeometry(0.3, 18, 12), capMat, 0, 0, PLANE_Z, e);
+      G.mesh(new T.SphereGeometry(0.14, 12, 8), coreMat, 0, 0, PLANE_Z + 0.22, e, false);
+      for (const z of [ZAP_BACK + 0.4, -0.8, -1.6]) {
         const ring = G.mesh(new T.TorusGeometry(0.2, 0.05, 8, 18), capMat, 0, 0, z, e, false);
         ring.rotation.y = 0;
       }
@@ -3198,7 +3325,7 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     bt.needsUpdate = true;
     const boltMat = new T.MeshBasicMaterial({ map: bt, color: '#bff6ff', transparent: true, blending: T.AdditiveBlending, depthWrite: false, side: T.DoubleSide });
     const beams = [];
-    for (const z of [ZAP_FRONT - 0.1, zc, ZAP_BACK + 0.25]) {
+    for (const z of [PLANE_Z, -0.8, -1.6, ZAP_BACK + 0.25]) {
       const b = new T.Mesh(new T.PlaneGeometry(1, 0.9), boltMat);
       b.position.z = z;
       g.add(b);
@@ -3209,7 +3336,7 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     sheet.position.z = zc;
     g.add(sheet);
     const glow = new T.Sprite(new T.SpriteMaterial({ map: G.glowTexture(), color: '#5fd8ff', transparent: true, opacity: 0.55, blending: T.AdditiveBlending, depthWrite: false }));
-    glow.position.z = ZAP_FRONT;
+    glow.position.z = PLANE_Z;
     g.add(glow);
     g.visible = false;
     scene.add(g);
@@ -3347,8 +3474,10 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
   const view = { x: 0, w: 1, h: 1 };
   // The camera fits the whole lab height between the HUD at the top and the buttons at the bottom (m.top / m.bottom,
   // in pixels), and keeps at least VW m of lab across, whatever the screen shape. focusY (the podium) overrides the
-  // height it looks at; zoom > 1 moves in.
-  function frame(camX, focusY, zoom, m) {
+  // height it looks at; zoom > 1 moves in. It stands at camX and looks straight across the lab; `lead` is how far
+  // across the screen camX shows (0.3 while flying: the flyers a third of the way in, more lab ahead), done with an
+  // off-centre view rather than by turning the camera, so everything at camX lines up whatever its depth.
+  function frame(camX, focusY, zoom, m, lead) {
     m = m || { top: 24, bottom: 24 };
     const fov = (camera.fov * Math.PI) / 180, tan = Math.tan(fov / 2), w = view.w, h = view.h, aspect = w / h;
     const VW = aspect < 0.7 ? 12 : aspect < 1 ? 14 : 17.5;
@@ -3362,17 +3491,27 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
       cy = hi >= lo ? (hi + lo) / 2 : H / 2;
     }
     const dist = VH / (2 * tan);
-    camera.position.set(camX, cy + 0.5, LANES[1] + dist);
-    camera.lookAt(camX, cy, LANES[1]);
+    camera.position.set(camX, cy + 0.5, PLANE_Z + dist);
+    camera.lookAt(camX, cy, PLANE_Z);
+    const ld = lead == null ? 0.5 : lead;
+    camera.aspect = aspect;
+    if (Math.abs(ld - 0.5) < 1e-4) camera.clearViewOffset();
+    else camera.setViewOffset(2 * Math.max(ld, 1 - ld) * w, h, ld < 0.5 ? (1 - 2 * ld) * w : 0, 0, w, h);
     // the light follows so the flyers' shadows stay on the floor
     sun.position.set(camX + 6, 22, 14);
     sun.target.position.set(camX + 4, 0, -1);
     sun.target.updateMatrixWorld();
     view.x = camX;
   }
-  // how many metres of lab are in view across, at the flyers' depth (for placing things on screen)
+  // where to draw something that is at (x, y) but z deep, so that it shows on screen exactly where (x, y) in the
+  // human's plane shows: on the camera's sightline through that point (call after frame())
+  function lineUp(x, y, z, out) {
+    const c = camera.position, k = (c.z - z) / (c.z - PLANE_Z);
+    return out.set(c.x + (x - c.x) * k, c.y + (y - c.y) * k, z);
+  }
+  // how many metres of lab are in view across, in the human's plane
   function visibleWidth() {
-    const fov = (camera.fov * Math.PI) / 180, dist = camera.position.z - LANES[1];
+    const fov = (camera.fov * Math.PI) / 180, dist = camera.position.z - PLANE_Z;
     return 2 * Math.tan(fov / 2) * dist * (view.w / view.h);
   }
 
@@ -3449,7 +3588,7 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
   }
 
   JP.world = {
-    LANES, COIN_Z, ZAP_FRONT, init, setLab, resize, update, render, frame, visibleWidth,
+    PLANE_Z, COIN_Z, ZAP_FRONT, init, setLab, resize, update, render, frame, visibleWidth, lineUp,
     get scene() { return scene; },
     get camera() { return camera; },
     get renderer() { return renderer; },
@@ -3636,6 +3775,16 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
       tag.position.y = headTop + 0.4;
       root.add(tag);
     }
+    // Foxy and Froggy fly further back, so when they're level with you they're right behind you: a little face over
+    // the head that shows through, Froggy's a bit higher, so you can always see where they are
+    let badge = null;
+    if (o.badge) {
+      badge = new T.Sprite(new T.SpriteMaterial({ map: G.emojiTexture(o.badge), depthTest: false, depthWrite: false, transparent: true }));
+      badge.renderOrder = 10;
+      badge.scale.setScalar(0.42);
+      badge.position.y = headTop + (o.badgeUp || 0.3);
+      root.add(badge);
+    }
     const bubble = new T.Sprite(new T.SpriteMaterial({ map: bubbleTexture(), color: '#7fe7ff', transparent: true, depthWrite: false }));
     bubble.scale.setScalar(2.05 * (scale / SCALE));
     bubble.visible = false;
@@ -3690,7 +3839,7 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     }
 
     return {
-      id, entry, root, person: p, headTop, tag, bubble, seq,
+      id, entry, root, person: p, headTop, tag, badge, bubble, seq,
       get hop() { return st.hop; },
       get mode() { return st.mode; },
       get move() { return st.mode === 'celebrate' ? segment(seq, st.modeT) : null; },
@@ -3727,10 +3876,11 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
         const wantYaw = air ? AIR_YAW[air] || FLY_YAW : flying ? FLY_YAW : cele ? POSE_YAW[cele.mode] || FACE_YAW : FACE_YAW;
         st.yaw += (wantYaw - st.yaw) * damp(7, dt);
         turn.rotation.y = st.yaw;
-        // tilt: lean into the climb, a spin when zapped, a slow roll in the bubble
+        // tilt: lean into the climb, a shake when zapped (a shake, not a somersault: his outline stays where the
+        // rules say his body is, so coins still go to him exactly when they touch him), a slow roll in the bubble
         if (flying && s.dizzy > 0) {
-          st.spin -= dt * 12;
-          tilt.rotation.z = st.spin;
+          st.spin += dt * 30;
+          tilt.rotation.z = Math.sin(st.spin) * 0.22;
         } else if (flying && s.out) {
           st.spin += dt * 0.8;
           tilt.rotation.z = Math.sin(st.spin) * 0.5;
@@ -3750,7 +3900,13 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
             standPose(p, air === 'boxing' ? st.airT * 6 : st.phase, air, damp(14, dt));
             p.legL.rotation.x = 0.3 + Math.sin(st.phase) * 0.15;
             p.legR.rotation.x = 0.1 - Math.sin(st.phase) * 0.15;
-          } else if (s.dizzy > 0) people.pose(p, st.phase, 'fall', damp(14, dt));
+          } else if (s.dizzy > 0) {
+            // zapped: arms flail back and forth (not up over his head, which would poke out of his outline)
+            st.phase += dt * 14;
+            people.pose(p, st.phase, 'jet', damp(14, dt));
+            p.armL.rotation.x = 0.4 + Math.sin(st.phase) * 0.6;
+            p.armR.rotation.x = 0.4 - Math.sin(st.phase) * 0.6;
+          }
           else if (s.ground && !s.hold) {
             st.phase += dt * 13;
             people.pose(p, st.phase, 'run', damp(16, dt));
@@ -3860,14 +4016,22 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
   let paused = false;
   let rc = null, models = [], humans = [], demo = true;
   let countT = 0, countShown = 0, endT = 0;
-  let camX = 0, camY = L.H / 2, camZoom = 1, camTarget = null;
+  let camX = 0, camY = L.H / 2, camZoom = 1, camLead = 0.3, camTarget = null;
   let buddy = null, hfT = 0, hfSprite = null, treatSprite = null;
   let finishPlan = null, results = null;
   const forced = [false, false];
   const keyHold = { p0: new Set(), p1: new Set() };
   const touches = new Map(); // pointerId -> player
   const puffT = [0, 0, 0], wasHold = [false, false, false];
-  const nozzle = [new THREE.Vector3(), new THREE.Vector3()];
+  const nozzle = [new THREE.Vector3(), new THREE.Vector3()], evAt = new THREE.Vector3();
+
+  // How deep each flyer flies. The human is in the front plane, where his coins are drawn (js/world.js): what touches
+  // him on screen touches him in the rules. With two players the brothers share that plane (a hair apart, so they
+  // don't flicker into each other); Foxy and Froggy fly further back, behind the coins, which aren't theirs.
+  function laneZ(f) {
+    if (humans.length === 2) return f.i === 0 ? 0.06 : -0.06;
+    return f.cpu ? (f.id === 'foxy' ? -0.8 : -1.6) : 0;
+  }
 
   // ---------------------------------------------------------------- toasts and the count
   function toast(text, cls) {
@@ -3914,7 +4078,7 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     for (const m of models) W.scene.remove(m.root);
     models = rc.flyers.map((f) => {
       // name tags only with 2 players (Foxy and Froggy wear their faces); side by side, so they don't sit on top of each other
-      const m = F.make(f.id, { tag: humans.length === 2 });
+      const m = F.make(f.id, { tag: humans.length === 2, badge: f.cpu ? (f.id === 'foxy' ? '🦊' : '🐸') : null, badgeUp: f.id === 'froggy' ? 0.75 : 0.3 });
       if (m.tag) m.tag.position.x = f.lane ? 0.5 : -0.5;
       W.scene.add(m.root);
       return m;
@@ -3922,7 +4086,8 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     W.setLab(lab);
     removeBuddy();
     finishPlan = null;
-    camX = rc.x + 3;
+    camX = rc.x;
+    camLead = 0.3;
     camZoom = 1;
     camY = L.H / 2;
     camTarget = null;
@@ -4188,7 +4353,7 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
         L.shield(rc, 0, SHIELD_S);
         toast(`${NAMES[b.id]} SAYS: SHIELD!`, 'good');
         SFX.shield();
-        W.sparkle(rc.x, meY, W.LANES[me.lane]);
+        W.sparkle(rc.x, meY, laneZ(me));
         m.airPose(null);
       }
     } else if (b.phase === 'shield') {
@@ -4229,14 +4394,14 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     toast('✋ HIGH FIVE!', 'good');
     SFX.hi5();
     const a = rc.flyers[0], b = rc.flyers[1];
-    W.sparkle(rc.x + 0.4, (a.y + b.y) / 2, -0.6);
+    W.sparkle(rc.x + 0.4, (a.y + b.y) / 2, 0.2);
   }
   function updateHighFive(dt) {
     if (hfT <= 0) return;
     hfT -= dt;
     const a = rc.flyers[0], b = rc.flyers[1];
     if (hfSprite) {
-      hfSprite.position.set(rc.x + 0.55, (a.y + b.y) / 2 + 0.3, -0.5);
+      hfSprite.position.set(rc.x + 0.55, (a.y + b.y) / 2 + 0.3, 0.2);
       hfSprite.scale.setScalar(0.7 + Math.sin(Math.min(1, (1 - hfT) * 3) * Math.PI) * 0.3);
     }
     if (hfT <= 0) {
@@ -4250,16 +4415,16 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
   function handleEvents() {
     for (const ev of rc.events) {
       const f = ev.i !== undefined ? rc.flyers[ev.i] : null;
-      const z = f ? W.LANES[f.lane] : 0;
+      const at = f ? W.lineUp(rc.x, f.y, laneZ(f), evAt) : null, z = f ? at.z : 0;
       if (ev.type === 'coin') {
-        W.coinBurst(rc.x, f.y, z);
+        W.coinBurst(at.x, at.y, z);
         if (demo) continue;
         if (!f.cpu) {
           S.coin(ev.streak);
           if (ev.streak && ev.streak % 10 === 9) toast(`COIN STREAK ×${ev.streak + 1}!`);
         }
       } else if (ev.type === 'zap') {
-        W.zapBurst(rc.x, f.y, z);
+        W.zapBurst(at.x, at.y, z);
         if (demo) continue;
         SFX.zap();
         if (f.cpu) continue;
@@ -4267,7 +4432,7 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
         const P = L.LEVELS[f.level];
         toast(P.hearts ? `⚡ ${who}BZZT! ❤️ −1` : ev.lost ? `⚡ ${who}BZZT! −${ev.lost} 🪙` : `⚡ ${who}BZZT!`, 'zap');
       } else if (ev.type === 'block') {
-        W.sparkle(rc.x + 0.4, f.y, z);
+        W.sparkle(at.x + 0.4, at.y, z);
         if (demo) continue;
         SFX.block();
         toast('🛡️ SHIELD BLOCK!', 'good');
@@ -4303,10 +4468,14 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     finishPlan = order.map((f, k) => {
       const st = steps[Math.min(k, 2)];
       const sx = k > 2 ? st.x + 1.6 : st.x;
-      return { f, m: models[f.i], from: { x: rc.x, y: f.y, z: W.LANES[f.lane] }, to: { x: sx, y: st.top + feet, z: -1.15 }, winner: f.place === 1, done: false };
+      const at = models[f.i].root.position;
+      return { f, m: models[f.i], from: { x: at.x, y: at.y, z: at.z }, to: { x: sx, y: st.top + feet, z: -1.15 }, winner: f.place === 1, done: false };
     });
     camTarget = { x: rc.lab.exitX + 8, y: 2.6, zoom: 1.45 };
-    for (const m of models) if (m.tag) m.tag.position.set(0, m.headTop + 0.4, 0);
+    for (const m of models) {
+      if (m.tag) m.tag.position.set(0, m.headTop + 0.4, 0);
+      if (m.badge) m.badge.visible = false;
+    }
   }
   function updateFinish(dt) {
     endT += dt;
@@ -4442,11 +4611,32 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
         if (endT > 2.2) showResults(true);
       }
     }
+    // camera: right beside the flyers, who show a third of the way in from the left (js/world.js frame); at the exit
+    // it glides over to the podium
+    if (camTarget) {
+      const k = damp(2.2, dt);
+      camX += (camTarget.x - camX) * k;
+      camY += (camTarget.y - camY) * k;
+      camZoom += (camTarget.zoom - camZoom) * k;
+      camLead += (0.5 - camLead) * k;
+    } else {
+      camX = rc.x;
+      camY = L.H / 2;
+      camZoom = 1;
+      camLead = 0.3;
+    }
+    // room for the HUD above the ceiling and the buttons under the floor while flying
+    const hud = mode === 'count' || mode === 'fly' || mode === 'zapped', short = window.innerHeight < 500;
+    W.frame(camX, camTarget ? camY : null, camZoom, hud ? { top: short ? 56 : 104, bottom: short ? 50 : 66 } : { top: 30, bottom: 30 }, camLead);
     // flyers
     if (mode !== 'finish' && !(mode === 'over' && finishPlan)) {
       rc.flyers.forEach((f, i) => {
         const m = models[i];
-        m.root.position.set(rc.x, f.y, W.LANES[f.lane]);
+        // drawn on the camera's sightline through where he is in the human's plane: everyone at the same x and height
+        // shows at the same place on screen, Foxy and Froggy just smaller, further back
+        W.lineUp(rc.x, f.y, laneZ(f), m.root.position);
+        // Foxy's and Froggy's little faces only while they're hidden behind the human (level with him)
+        if (m.badge) m.badge.visible = !f.out && Math.abs(f.y - rc.flyers[0].y) < 0.6;
         // a name tag near the ceiling would hide behind it: it goes under his feet instead
         if (m.tag) m.tag.position.y = f.y + m.headTop + 0.4 > L.H - 0.2 ? -m.headTop - 0.35 : m.headTop + 0.4;
         m.update(paused ? 0 : dt, { y: f.y, vy: f.vy, hold: f.hold, ground: f.y <= L.Y_MIN + 1e-6 && !f.hold, dizzy: f.dizzy, safe: f.safe, shield: f.shield, out: f.out });
@@ -4463,20 +4653,6 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
         if (i < 3) wasHold[i] = f.hold;
       });
     } else if (mode === 'over' && finishPlan) for (const p of finishPlan) p.m.update(dt, {});
-    // camera: the flyers a third of the way in from the left, the whole lab height in view
-    const vw = W.visibleWidth();
-    let tx = rc.x + vw * 0.2, tz = 1;
-    if (camTarget) {
-      tx = camTarget.x;
-      tz = camTarget.zoom;
-      camY += (camTarget.y - camY) * damp(2.2, dt);
-    } else camY = L.H / 2;
-    const k = camTarget ? damp(2.2, dt) : damp(10, dt);
-    camX += (tx - camX) * (mode === 'title' && Math.abs(tx - camX) > 20 ? 1 : k);
-    camZoom += (tz - camZoom) * k;
-    // room for the HUD above the ceiling and the buttons under the floor while flying
-    const hud = mode === 'count' || mode === 'fly' || mode === 'zapped', short = window.innerHeight < 500;
-    W.frame(camX, camTarget ? camY : null, camZoom, hud ? { top: short ? 56 : 104, bottom: short ? 50 : 66 } : { top: 30, bottom: 30 });
     W.update(paused ? 0 : dt, { t: rc.t, taken: rc.taken });
     if (mode === 'fly' || mode === 'count' || mode === 'finish' || mode === 'zapped') updateHud();
   }
@@ -4557,11 +4733,11 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
       play(o.seed);
       return info();
     },
-    // run the game for this many seconds right now (60 steps a second) and draw it
-    step(sec) {
+    // run the game for this many seconds right now (60 steps a second) and draw it (draw = false: only move the camera)
+    step(sec, draw) {
       const n = Math.max(1, Math.round((sec || 0) * 60));
       for (let i = 0; i < n; i++) update(1 / 60);
-      W.render();
+      if (draw !== false) W.render();
       return info();
     },
     hold(i, on) { forced[i] = !!on; },
@@ -4582,6 +4758,8 @@ if (typeof document !== 'undefined') document.title = `${window.JP_TITLE} · Ted
     check(o) { return JP.checks.run(Object.assign({ quick: true }, o)); },
     prove() { return JP.checks.run({ quick: true, prove: true }); },
     get race() { return rc; },
+    // the flyers' 3D models, in the same order as race.flyers (for checks that look at what's drawn)
+    get roots() { return models.map((m) => m.root); },
     get save() { return save; },
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
