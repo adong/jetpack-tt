@@ -317,10 +317,12 @@
   }
 
   // ---------------------------------------------------------------- the solver
-  // o.margin: fly with a bigger hit circle (a wobblier flyer); o.decide: ticks between choices (12 = 0.1 s)
+  // o.margin: fly with a bigger hit circle (a wobblier flyer); o.decide: ticks between choices (12 = 0.1 s);
+  // o.coarse: bigger boxes, about 4 times faster (the game's own check before each flight). Bigger boxes can only miss
+  // a way through, never invent one: every flyer it keeps really flew there.
   function solve(lab, level, o) {
     o = o || {};
-    const P = phys(level), r = R + (o.margin || 0), D = o.decide || 12, yq = 0.1, vq = 0.5;
+    const P = phys(level), r = R + (o.margin || 0), D = o.decide || 12, yq = o.coarse ? 0.2 : 0.1, vq = o.coarse ? 1 : 0.5;
     let states = [{ y: Y_MIN, vy: 0, p: -1, h: 0 }];
     const hist = [];
     let x = 0, ft = 0, peak = 0;

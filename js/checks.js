@@ -43,6 +43,8 @@
             continue;
           }
           peak = Math.min(peak, r.peak);
+          // the quicker version the game runs before every flight has to agree
+          if (!margin && !L.solve(lab, lv, { coarse: true }).ok) problems.push(`${what}: the game's quick check says blocked`);
           if (!margin) {
             const rep = replay(lab, lv, r);
             replayed++;
@@ -50,7 +52,7 @@
           }
         }
       }
-      return { stat: `${n} labs flown to the exit, ${replayed} replays with 0 zaps, fewest ways through at any moment ${peak}`, problems };
+      return { stat: `${n} labs flown to the exit (the game's quick check agrees), ${replayed} replays with 0 zaps, fewest ways through at any moment ${peak}`, problems };
     },
 
     layout(o) {

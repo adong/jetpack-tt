@@ -20,7 +20,7 @@
     // flying
     'Pause': '暂停', 'Pause (P)': '暂停 (P)', 'Sound (M)': '声音 (M)', 'Sound on or off': '声音 开 / 关',
     'Call your brother (T)': '叫兄弟来帮忙 (T)', 'High five (T)': '击掌 (T)', 'HIGH FIVE': '击掌',
-    'HOLD TO FLY!': '按住就能飞！', 'GO!': '出发！', '🏁 EXIT!': '🏁 到出口啦！', 'EXIT': '出口',
+    'LOADING…': '加载中…', 'HOLD TO FLY!': '按住就能飞！', 'GO!': '出发！', '🏁 EXIT!': '🏁 到出口啦！', 'EXIT': '出口',
     '🛡️ SHIELD BLOCK!': '🛡️ 护盾挡住啦！', '⚡ ZAPPED!': '⚡ 被电晕啦！', '✋ HIGH FIVE!': '✋ 击掌！', '❤️ +1': '❤️ +1',
     // pause, results
     'PAUSED': '暂停中', 'P · Esc · Space': 'P · Esc · 空格键', '▶ KEEP FLYING': '▶ 继续飞', '🏠 HOME': '🏠 主页', '↻ PLAY AGAIN': '↻ 再玩一次',

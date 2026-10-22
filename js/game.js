@@ -95,7 +95,7 @@
       // every lab is flown by the solver before anyone plays it, at each level that's playing (the checks have never
       // seen one fail; this is the promise kept anyway)
       const levels = [...new Set(flyers.filter((f) => !f.cpu).map((f) => f.level))];
-      if (levels.every((l) => L.solve(lab, l).ok)) break;
+      if (levels.every((l) => L.solve(lab, l, { coarse: true }).ok)) break;
       seed++;
     }
     rc = L.race({ lab, flyers });
@@ -124,6 +124,7 @@
   function play(seed) {
     S.init();
     setup(false, seed);
+    clearToasts();
     mode = 'count';
     countT = 3.2;
     countShown = 4;
@@ -137,6 +138,7 @@
   }
   function home() {
     paused = false;
+    clearToasts();
     mode = 'title';
     $('pause').classList.add('hidden');
     $('over').classList.add('hidden');
@@ -493,6 +495,7 @@
       return { f, m: models[f.i], from: { x: rc.x, y: f.y, z: W.LANES[f.lane] }, to: { x: sx, y: st.top + feet, z: -1.15 }, winner: f.place === 1, done: false };
     });
     camTarget = { x: rc.lab.exitX + 8, y: 2.6, zoom: 1.45 };
+    for (const m of models) if (m.tag) m.tag.position.set(0, m.headTop + 0.4, 0);
   }
   function updateFinish(dt) {
     endT += dt;
@@ -520,8 +523,12 @@
   }
 
   // ---------------------------------------------------------------- results
+  function clearToasts() {
+    $('toasts').innerHTML = '';
+  }
   function showResults(zapped) {
     mode = 'over';
+    clearToasts();
     $('hud').classList.add('hidden');
     document.body.classList.remove('counting');
     const order = L.places(rc);
@@ -599,7 +606,7 @@
         if (countT <= 0.2) {
           mode = 'fly';
           L.go(rc);
-          showCount(Kit.lang.t('GO!'), true);
+          showCount('GO!', true);
           document.body.classList.remove('counting');
           S.music('play');
           S.jet();
@@ -647,17 +654,18 @@
     } else if (mode === 'over' && finishPlan) for (const p of finishPlan) p.m.update(dt, {});
     // camera: the flyers a third of the way in from the left, the whole lab height in view
     const vw = W.visibleWidth();
-    let tx = rc.x + vw * 0.2, ty = L.H / 2, tz = 1;
+    let tx = rc.x + vw * 0.2, tz = 1;
     if (camTarget) {
       tx = camTarget.x;
-      ty = camTarget.y;
       tz = camTarget.zoom;
-    }
+      camY += (camTarget.y - camY) * damp(2.2, dt);
+    } else camY = L.H / 2;
     const k = camTarget ? damp(2.2, dt) : damp(10, dt);
     camX += (tx - camX) * (mode === 'title' && Math.abs(tx - camX) > 20 ? 1 : k);
-    camY += (ty - camY) * k;
     camZoom += (tz - camZoom) * k;
-    W.frame(camX, camY, camZoom);
+    // room for the HUD above the ceiling and the buttons under the floor while flying
+    const hud = mode === 'count' || mode === 'fly' || mode === 'zapped', short = window.innerHeight < 500;
+    W.frame(camX, camTarget ? camY : null, camZoom, hud ? { top: short ? 56 : 104, bottom: short ? 50 : 66 } : { top: 30, bottom: 30 });
     W.update(paused ? 0 : dt, { t: rc.t, taken: rc.taken });
     if (mode === 'fly' || mode === 'count' || mode === 'finish' || mode === 'zapped') updateHud();
   }

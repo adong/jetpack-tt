@@ -574,13 +574,25 @@
 
   // ---------------------------------------------------------------- camera
   const view = { x: 0, w: 1, h: 1 };
-  // the camera keeps at least VW m of lab across and VH m from floor to ceiling in view, whatever the screen shape
-  function frame(camX, camY, zoom) {
-    const fov = (camera.fov * Math.PI) / 180, tan = Math.tan(fov / 2), aspect = view.w / view.h;
-    const VH = H + 2.6, VW = aspect < 1 ? 15 : 17.5;
-    const dist = Math.max(VH / (2 * tan), VW / (2 * tan * aspect)) / (zoom || 1);
-    camera.position.set(camX, camY + 0.5, LANES[1] + dist);
-    camera.lookAt(camX, camY, LANES[1]);
+  // The camera fits the whole lab height between the HUD at the top and the buttons at the bottom (m.top / m.bottom,
+  // in pixels), and keeps at least VW m of lab across, whatever the screen shape. focusY (the podium) overrides the
+  // height it looks at; zoom > 1 moves in.
+  function frame(camX, focusY, zoom, m) {
+    m = m || { top: 24, bottom: 24 };
+    const fov = (camera.fov * Math.PI) / 180, tan = Math.tan(fov / 2), w = view.w, h = view.h, aspect = w / h;
+    const VW = aspect < 0.7 ? 12 : aspect < 1 ? 14 : 17.5;
+    const ppmH = Math.max(8, (h - m.top - m.bottom) / (H + 0.6));
+    const ppm = Math.min(ppmH, w / VW) * (zoom || 1);
+    const VH = h / ppm;
+    let cy = focusY;
+    if (cy == null) {
+      // between "ceiling just under the HUD" and "floor just over the buttons"
+      const hi = H + 0.3 + m.top / ppm - VH / 2, lo = -0.3 - m.bottom / ppm + VH / 2;
+      cy = hi >= lo ? (hi + lo) / 2 : H / 2;
+    }
+    const dist = VH / (2 * tan);
+    camera.position.set(camX, cy + 0.5, LANES[1] + dist);
+    camera.lookAt(camX, cy, LANES[1]);
     // the light follows so the flyers' shadows stay on the floor
     sun.position.set(camX + 6, 22, 14);
     sun.target.position.set(camX + 4, 0, -1);
