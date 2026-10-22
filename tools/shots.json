@@ -1,0 +1,4 @@
+[
+ { "label": "prefs", "js": "localStorage.setItem('claudeGames.muted', '1'); localStorage.removeItem('claudeGames.lang'); localStorage.removeItem('jetpackTT.v1'); location.reload(); 'reload'", "wait": 4500 },
+ { "label": "title", "js": "game.step(3.2); 'demo at ' + game.info().x + ' m'", "wait": 900, "shot": "screenshot" }
+]
