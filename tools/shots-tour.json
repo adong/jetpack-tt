@@ -1,13 +1,67 @@
 [
- { "label": "prefs", "js": "localStorage.setItem('claudeGames.muted', '1'); localStorage.removeItem('claudeGames.lang'); localStorage.removeItem('jetpackTT.v1'); location.reload(); 'reload'", "wait": 4500 },
- { "label": "title", "js": "game.step(3); 'ok'", "wait": 600, "shot": "t1-title" },
- { "label": "fly", "js": "game.start({who:'tommy', level:'easy', seed: 7}); game.step(3.4); game.autopilot(); var r = game.step(7); JSON.stringify(r.flyers.map(f=>[f.id,f.coins,f.zaps]))", "wait": 600, "shot": "t2-fly" },
- { "label": "buddy", "js": "game.call(); game.step(2.4); var r2 = game.info(); r2.buddy + ' shield ' + r2.flyers[0].shield", "wait": 600, "shot": "t3-buddy" },
- { "label": "shield", "js": "game.step(1.2); game.info().buddy", "wait": 600, "shot": "t4-shield" },
- { "label": "2p", "js": "game.start({who:'both', level:{teddy:'normal', tommy:'easy'}, seed: 9}); game.step(3.4); game.hold(0,true); game.step(0.7); game.hold(0,false); game.hold(1,true); game.step(0.4); game.highFive(); game.step(0.3); JSON.stringify(game.info().flyers.map(f=>[f.id,f.level,f.y]))", "wait": 600, "shot": "t5-2p" },
- { "label": "normal", "js": "game.hold(1,false); game.start({who:'teddy', level:'normal', seed: 11}); game.step(3.4); game.autopilot(); var r3 = game.step(30); JSON.stringify([r3.x, r3.flyers.map(f=>[f.id,f.coins,f.hearts,f.out])])", "wait": 600, "shot": "t6-normal" },
- { "label": "podium", "js": "for (var i = 0; i < 400 && game.info().mode === 'fly'; i++) game.step(0.5); game.step(4.2); game.info().mode", "wait": 600, "shot": "t7-podium" },
- { "label": "results", "js": "game.step(2); JSON.stringify(game.info().results)", "wait": 700, "shot": "t8-results" },
- { "label": "zapped", "js": "game.start({who:'teddy', level:'normal', seed: 12}); game.step(3.4); var rc = game.race, f = rc.flyers[0]; for (var k = 0; k < 3; k++) { var z = rc.lab.zaps.find(q => !q.spin && q.xa > rc.x + 2); for (var i = 0; i < 400 && rc.x < z.xb + 2 && game.info().mode === 'fly'; i++) { f.y = (z.y1 + z.y2) / 2; f.vy = 0; game.step(1/60); } } game.step(1); game.info().mode", "wait": 600, "shot": "t9-zapped" },
- { "label": "zapres", "js": "game.step(2); JSON.stringify(game.info().results)", "wait": 600, "shot": "t10-zapres" }
+ {
+  "label": "prefs",
+  "js": "localStorage.setItem('claudeGames.muted', '1'); localStorage.removeItem('claudeGames.lang'); localStorage.removeItem('jetpackTT.v1'); location.reload(); 'reload'",
+  "wait": 4500
+ },
+ {
+  "label": "title",
+  "js": "game.step(3); 'ok'",
+  "wait": 600,
+  "shot": "t1-title"
+ },
+ {
+  "label": "fly",
+  "js": "game.start({who:'tommy', level:'easy', seed: 7}); game.step(3.4); game.autopilot(); var r = game.step(7); JSON.stringify(r.flyers.map(f=>[f.id,f.coins,f.zaps]))",
+  "wait": 600,
+  "shot": "t2-fly"
+ },
+ {
+  "label": "buddy",
+  "js": "game.call(); game.step(2.4); var r2 = game.info(); r2.buddy + ' shield ' + r2.flyers[0].shield",
+  "wait": 600,
+  "shot": "t3-buddy"
+ },
+ {
+  "label": "shield",
+  "js": "game.step(1.2); game.info().buddy",
+  "wait": 600,
+  "shot": "t4-shield"
+ },
+ {
+  "label": "2p",
+  "js": "game.start({who:'both', level:{teddy:'normal', tommy:'easy'}, seed: 9}); game.step(3.4); game.hold(0,true); game.step(0.7); game.hold(0,false); game.hold(1,true); game.step(0.4); game.highFive(); game.step(0.3); JSON.stringify(game.info().flyers.map(f=>[f.id,f.level,f.y]))",
+  "wait": 600,
+  "shot": "t5-2p"
+ },
+ {
+  "label": "normal",
+  "js": "game.hold(1,false); game.start({who:'teddy', level:'normal', seed: 11}); game.step(3.4); game.autopilot(); var r3 = game.step(30); JSON.stringify([r3.x, r3.flyers.map(f=>[f.id,f.coins,f.hearts,f.out])])",
+  "wait": 600,
+  "shot": "t6-normal"
+ },
+ {
+  "label": "podium",
+  "js": "for (var i = 0; i < 400 && game.info().mode === 'fly'; i++) game.step(0.5); game.step(4.2); game.info().mode",
+  "wait": 600,
+  "shot": "t7-podium"
+ },
+ {
+  "label": "results",
+  "js": "game.step(2); JSON.stringify(game.info().results)",
+  "wait": 700,
+  "shot": "t8-results"
+ },
+ {
+  "label": "zapped",
+  "js": "game.start({who:'teddy', level:'normal', seed: 12}); game.step(3.4); var rc = game.race, f = rc.flyers[0]; for (var i = 0; i < 9000 && game.info().mode === 'fly'; i++) { var z = rc.lab.zaps.find(q => !q.spin && q.xb > rc.x - 0.3 && q.xa < rc.x + 0.3); if (z && f.safe <= 0) { f.y = (z.y1 + z.y2) / 2; f.vy = 0; } game.step(1/60); } game.step(1); game.info().mode",
+  "wait": 600,
+  "shot": "t9-zapped"
+ },
+ {
+  "label": "zapres",
+  "js": "game.step(2); JSON.stringify(game.info().results)",
+  "wait": 600,
+  "shot": "t10-zapres"
+ }
 ]
