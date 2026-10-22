@@ -375,7 +375,7 @@
   }
 
   // ---------------------------------------------------------------- the race
-  // o: { seed, level (the lab's), flyers: [{ id, cpu, level, lane, bot }] }.
+  // o: { seed, level (the lab's), flyers: [{ id, cpu, level, lane, bot, dx }] }; dx: how far behind the lab's x he flies.
   // Coins: every computer flyer has its own copy of the lab's coins, so Foxy and Froggy can never take a coin from a
   // human; the humans share theirs (two brothers race for the same coins, the ones on screen). sets[0] is the humans'.
   // (sharedCoins, broken on purpose: everyone shares one set, closest takes it, as in the first version.)
@@ -386,14 +386,15 @@
       const P = phys(d.level || lab.level);
       return {
         set: d.cpu && broken !== 'sharedCoins' ? sets++ : 0,
-        i, id: d.id, cpu: !!d.cpu, level: d.level || lab.level, lane: d.lane || 0, bot: d.bot || null,
+        i, id: d.id, cpu: !!d.cpu, level: d.level || lab.level, lane: d.lane || 0, bot: d.bot || null, dx: d.dx || 0,
         y: Y_MIN, vy: 0, hold: false, coins: 0, hearts: P.hearts, out: false, zaps: 0, blocks: 0,
         dizzy: 0, safe: 0, shield: 0, blockT: 0, streak: 0, lastCoin: -9, want: false, think: 0, best: 0,
       };
     });
     const coinSets = [];
     for (let k = 0; k < sets; k++) coinSets.push(new Uint8Array(lab.coins.length));
-    return { lab, flyers, x: 0, ft: 0, t: 0, acc: 0, ticks: 0, phase: 'count', sets: coinSets, taken: coinSets[0], c0: 0, events: [], finished: false, over: false, stopAt: 0 };
+    const back = Math.max(0, ...flyers.map((f) => -f.dx));
+    return { lab, flyers, x: 0, ft: 0, t: 0, acc: 0, ticks: 0, phase: 'count', sets: coinSets, taken: coinSets[0], c0: 0, back, events: [], finished: false, over: false, stopAt: 0 };
   }
   function go(rc) {
     rc.phase = 'fly';
@@ -420,6 +421,10 @@
     const v = Math.sin(ft * 12.9898 + i * 78.233) * 43758.5453;
     return v - Math.floor(v);
   };
+  // Foxy and Froggy fly a body-length and two behind the human, each in his own lane further back: you can always see
+  // them beside you, and they never look ahead of you. Their coins are their own, so trailing changes nothing in the
+  // race (the coins stop well before the exit).
+  const TRAIL = { foxy: -1.2, froggy: -2.4 };
   // which controller Foxy or Froggy uses on a level
   function cpuBot(id, level) {
     if (broken === 'cpuPerfect') return 'perfect';
@@ -429,18 +434,18 @@
     const b = BOTS[f.bot];
     if (rc.t >= f.think) {
       f.think = rc.t + b.react;
-      const lab = rc.lab, v = speedAt(lab, rc.x), ax = rc.x + v * b.look;
+      const lab = rc.lab, x0 = rc.x + f.dx, v = speedAt(lab, x0), ax = x0 + v * b.look;
       // where the line will be, and how fast it's climbing there
       let ty = pathY(lab, ax) + Math.sin(rc.t * b.wobF + f.i * 1.7) * b.wob + b.bias;
       let tvy = (pathY(lab, ax + 0.5) - pathY(lab, ax - 0.5)) * v;
       if (b.chase && noise(rc.ft, f.i) < b.chase) {
         // a coin just ahead, near the line: go for it
-        const c = nextCoin(rc, f, rc.x + 0.5, rc.x + 3.5);
+        const c = nextCoin(rc, f, x0 + 0.5, x0 + 3.5);
         const off = c ? c.y - pathY(lab, c.x) : 0;
         // follow the row of coins, unless that line runs into a zapper on the way
         if (c && Math.abs(off) < 2.0) {
           let ok = true;
-          for (let d = 0; d <= 2.5 && ok; d += 0.5) ok = gapNear(lab, rc.x + d, pathY(lab, rc.x + d) + off) > R + ZH + 0.35;
+          for (let d = 0; d <= 2.5 && ok; d += 0.5) ok = gapNear(lab, x0 + d, pathY(lab, x0 + d) + off) > R + ZH + 0.35;
           if (ok) ty = pathY(lab, ax) + off;
         }
       }
@@ -471,7 +476,7 @@
     }
     rc.ticks++;
     // coins far behind are gone for good
-    while (rc.c0 < lab.coins.length && lab.coins[rc.c0].x < rc.x - 2) rc.c0++;
+    while (rc.c0 < lab.coins.length && lab.coins[rc.c0].x < rc.x - rc.back - 2) rc.c0++;
     for (const f of rc.flyers) {
       const P = phys(f.level);
       if (f.out) {
@@ -489,7 +494,7 @@
       if (f.shield > 0) f.shield -= STEP;
       if (f.blockT > 0) f.blockT -= STEP;
       if (!flying) continue;
-      const z = hitZap(lab, rc.x, f.y, rc.t, R);
+      const z = hitZap(lab, rc.x + f.dx, f.y, rc.t, R);
       if (z) {
         if (f.shield > 0 && broken !== 'noShield') {
           if (f.blockT <= 0) {
@@ -512,7 +517,7 @@
           if (taken[k]) continue;
           let who = null, best = Infinity;
           for (const f of rc.flyers) {
-            if (f.out || f.set !== s || !touches(c, rc.x, f.y)) continue;
+            if (f.out || f.set !== s || !touches(c, rc.x + f.dx, f.y)) continue;
             const dy = c.y - f.y, d = -Math.min(dy + BODY.down + COIN_R, BODY.up + COIN_R - dy); // minus how far in
             if (d < best || (d === best && (f.coins < who.coins || (f.coins === who.coins && (k + f.i) % 2 === 0)))) {
               best = d;
@@ -610,7 +615,7 @@
   }
 
   JP.lab = {
-    H, R, ZH, Y_MIN, Y_MAX, STEP, BODY, COIN_R, LEVELS, BOTS, touches,
+    H, R, ZH, Y_MIN, Y_MAX, STEP, BODY, COIN_R, LEVELS, BOTS, TRAIL, touches,
     rng, generate, solve, pathY, speedAt, ends, hitZap, zapGap, lineGap, physStep, phys,
     race, go, step, tick, shield, treat, places, botHold, cpuBot,
     breakIt(what) { broken = what || null; },

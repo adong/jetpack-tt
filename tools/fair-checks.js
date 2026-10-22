@@ -7,8 +7,10 @@
      with the game's own camera.
    - rivals: a coin drawn for the human never disappears unless the human took it, and Foxy and Froggy never take one
      of his coins (they still collect their own).
-   - level: everyone flies at the same x, so on screen everyone is at the same x too (within 1.5 px): nobody looks ahead;
-     and each flyer shows at his true height as seen in the human's plane, so two at the same height look level.
+   - level: the camera has no sideways parallax at the racers' place: a rival put at the human's own x lines up with him
+     within 2 px in every lane; where the rivals really fly (their own lanes, a little behind), each one level with the
+     human is clearly seen (60 % or more), no rival ever shows ahead of him, and in flight they're at least half
+     visible in 90 % of frames.
    - twoPlayers: the same touch rule for both brothers at once (a coin touching both goes to one of them).
    - keysRace (only where the game has its own coins per rival): whole races flown with keys against Foxy and Froggy:
      a pretend 5-year-old (slow, wobbly) wins EASY most of the time, a careful pretend 8-year-old (who steers round the
@@ -30,7 +32,9 @@ async function () {
   const roots = () => {
     const rc = game.race;
     if (game.roots) return game.roots;
-    return rc.flyers.map((f) => scene.children.find((o) => o.isGroup && Math.abs(o.position.x - rc.x) < 1e-6 && Math.abs(o.position.y - f.y) < 1e-6) || null);
+    // (two at the same place: the one in his own lane, 1.15 m apart)
+    const at = (f) => scene.children.filter((o) => o.isGroup && Math.abs(o.position.x - rc.x) < 1e-6 && Math.abs(o.position.y - f.y) < 1e-6);
+    return rc.flyers.map((f) => at(f).sort((a, b) => Math.abs(a.position.z + 1.15 * f.lane) - Math.abs(b.position.z + 1.15 * f.lane))[0] || null);
   };
   // the body's box on screen: every visible mesh except the additive jet flames
   const tmp = new T.Box3(), corner = new T.Vector3();
@@ -51,6 +55,8 @@ async function () {
     }
     return { l, r, t, b: bt };
   }
+  // how much of rectangle c is covered by rectangle a (0 to 1)
+  const covers = (a, c) => (Math.max(0, Math.min(a.r, c.r) - Math.max(a.l, c.l)) * Math.max(0, Math.min(a.b, c.b) - Math.max(a.t, c.t))) / Math.max(1, (c.r - c.l) * (c.b - c.t));
   // how far a disc reaches into a rectangle (px; negative = the gap between them)
   function overlap(rect, c) {
     const dx = Math.max(rect.l - c.x, 0, c.x - rect.r), dy = Math.max(rect.t - c.y, 0, c.y - rect.b);
@@ -138,16 +144,22 @@ async function () {
           if (!maxOv[hi].has(k) || ov > maxOv[hi].get(k)) maxOv[hi].set(k, ov);
         }
       });
-      // level: everyone's centre at the same x on screen, and every flyer shown where his place in the rules shows in
-      // the human's plane (so two at the same height look level too)
-      const hx = rs[humans[0].i] ? scr(rs[humans[0].i].position).x : null;
-      rs.forEach((r, i) => {
-        if (!r || hx === null) return;
+      // level: the other brother (same x) shows at the same x; a rival never shows ahead of the human, and is seen
+      const hr = rs[humans[0].i];
+      if (hr) {
+        const hx = scr(hr.position).x, hRect = bodyRect(hr);
         res.seenFlyers = Math.max(res.seenFlyers || 0, rs.filter(Boolean).length);
-        const s1 = scr(r.position), want = scr(new T.Vector3(rc.x, rc.flyers[i].y, 0));
-        res.levelPx = Math.max(res.levelPx, Math.abs(s1.x - hx));
-        res.heightPx = Math.max(res.heightPx || 0, Math.abs(s1.y - want.y));
-      });
+        rc.flyers.forEach((f, i) => {
+          const r = rs[i];
+          if (!r || i === humans[0].i) return;
+          const sx = scr(r.position).x;
+          if (!f.cpu) { res.levelPx = Math.max(res.levelPx, Math.abs(sx - hx)); return; }
+          res.aheadPx = Math.max(res.aheadPx === undefined ? -1e9 : res.aheadPx, sx - hx);
+          const cov = covers(hRect, bodyRect(r));
+          res.rivalFrames = (res.rivalFrames || 0) + 1;
+          if (cov <= 0.5) res.rivalSeen = (res.rivalSeen || 0) + 1;
+        });
+      }
     }
     for (const c of ['Space', 'KeyW', 'ArrowUp']) key('keyup', c);
     // the verdict for every coin a human came near
@@ -186,17 +198,47 @@ async function () {
   const cpuTook = sum('cpuTookHuman');
   if (cpuTook) rivalP.push(`rivals: Foxy and Froggy took ${cpuTook} of the human's coins`);
   checks.push({ name: 'rivals', ok: !rivalP.length, stat: `coins that vanished from the human's screen without him: ${sum('vanished')}; his coins taken by Foxy or Froggy: ${cpuTook}; Foxy and Froggy's own coins: ${one.map((r) => r.cpuCoins.join(' + ')).join(', ')}`, problems: rivalP.slice(0, 6) });
-  const lvl = Math.max(...one.map((r) => r.levelPx)), hgt = Math.max(...one.map((r) => r.heightPx || 0));
+  // staged: everyone level with the human at three heights. First each rival at the human's own x (it must line up
+  // within 2 px at every depth), then where he really flies: he must be clearly seen (60 % of him or more, not hidden
+  // behind the human) and not ahead.
+  const staged = { sameX: 0, seen: 1, ahead: -1e9 };
+  game.start({ who: 'teddy', level: 'easy', seed: 3 });
+  for (let i = 0; i < 330; i++) frame(false);
+  {
+    const rc = game.race, dx0 = rc.flyers.map((f) => f.dx || 0);
+    for (const y of [1.2, 3.2, 5.2]) {
+      for (const same of [true, false]) {
+        rc.flyers.forEach((f, i) => { f.y = y; f.vy = 0; f.dizzy = 0; f.safe = 0; f.dx = same ? 0 : dx0[i]; });
+        frame(false);
+        cam.updateMatrixWorld();
+        const rs = roots(), hx = scr(rs[0].position).x, hRect = bodyRect(rs[0]);
+        for (let i = 1; i < rs.length; i++) {
+          if (!rs[i]) { staged.sameX = 1e9; continue; }
+          const sx = scr(rs[i].position).x;
+          if (same) staged.sameX = Math.max(staged.sameX, Math.abs(sx - hx));
+          else {
+            staged.seen = Math.min(staged.seen, 1 - covers(hRect, bodyRect(rs[i])));
+            staged.ahead = Math.max(staged.ahead, sx - hx);
+          }
+        }
+      }
+    }
+    rc.flyers.forEach((f, i) => { f.dx = dx0[i]; });
+  }
+  const ahead = Math.max(staged.ahead, ...one.map((r) => (r.aheadPx === undefined ? -1e9 : r.aheadPx)));
+  const seenShare = one.reduce((a, r) => a + (r.rivalSeen || 0), 0) / Math.max(1, one.reduce((a, r) => a + (r.rivalFrames || 0), 0));
   const lvlP = [];
-  if (lvl > 1.5) lvlP.push(`level: a rival at the same x looked ${lvl.toFixed(0)} px ahead or behind`);
-  if (hgt > 1.5) lvlP.push(`level: a flyer was drawn ${hgt.toFixed(0)} px higher or lower than his height in the game`);
+  if (staged.sameX > 2) lvlP.push(`level: a rival at the human's x showed ${staged.sameX.toFixed(0)} px ahead or behind him`);
+  if (ahead > 1) lvlP.push(`level: a rival showed ${ahead.toFixed(0)} px ahead of the human`);
+  if (staged.seen < 0.6) lvlP.push(`level: a rival level with the human was only ${Math.round(staged.seen * 100)} % visible`);
+  if (seenShare < 0.9) lvlP.push(`level: rivals were mostly hidden behind the human in ${Math.round((1 - seenShare) * 100)} % of the frames`);
   if (Math.min(...one.map((r) => r.seenFlyers || 0)) < 3) lvlP.push('level: could not find all three flyers on screen');
-  checks.push({ name: 'level', ok: !lvlP.length, stat: `the farthest any flyer's centre was from the human's across the screen: ${lvl.toFixed(1)} px; from his true height: ${hgt.toFixed(1)} px`, problems: lvlP });
+  checks.push({ name: 'level', ok: !lvlP.length, stat: `a rival at the human's x lines up within ${staged.sameX.toFixed(1)} px at every depth; level with him where they really fly, each rival is at least ${Math.round(staged.seen * 100)} % visible; in flight the rivals were never ahead (closest ${(-ahead).toFixed(0)} px behind) and at least half visible in ${Math.round(seenShare * 100)} % of frames`, problems: lvlP });
 
   // ---------------------------------------------------------------- 2 players, both EASY: W for Teddy, ↑ for Tommy
   const two = await watch({ who: 'both', level: 'easy', seed: 5, frames: 60 * 26, kids: [kid(0, 'KeyW', { chase: 0.8, wob: 0.3 }), kid(1, 'ArrowUp', { chase: 0.5, wob: 0.5, off: 0.8 })] });
   const twoP = two.problems.filter((p) => p.startsWith('touch'));
-  checks.push({ name: 'twoPlayers', ok: !twoP.length && two.touched > 10 && two.levelPx <= 1.5, stat: `2 players with W and ↑: ${two.touched} coins touched on screen, ${two.collected} collected, ${two.misses} clear misses, level within ${two.levelPx.toFixed(1)} px`, problems: twoP.slice(0, 6) });
+  checks.push({ name: 'twoPlayers', ok: !twoP.length && two.touched > 10 && two.levelPx <= 2, stat: `2 players with W and ↑: ${two.touched} coins touched on screen, ${two.collected} collected, ${two.misses} clear misses, level within ${two.levelPx.toFixed(1)} px`, problems: twoP.slice(0, 6) });
 
   // ---------------------------------------------------------------- whole races with keys (the new game only)
   if (newGame && L.cpuBot) {

@@ -3,15 +3,17 @@
    the exit door with its landing pad and podium, and the sparks, smoke and confetti.
    Everything long is a pool that follows the camera: the lab is 420-720 m long but only ~45 m of it is ever built.
    The human flies in the front plane (z = 0) and his coins are drawn in that same plane, so a coin touches him on
-   screen exactly when it touches him in the rules. Foxy and Froggy fly further back (js/game.js picks the depths).
-   The camera stands right beside the flyers (same x) and looks straight across with an off-centre view, so everyone
-   at the same x is at the same place across the screen, whatever their depth: nobody looks ahead when they're level. */
+   screen exactly when it touches him in the rules. Foxy and Froggy fly in their own lanes further back (js/game.js).
+   The camera is centred on the racers' place along the lab (the human's x) and looks straight across, a little from
+   above, with an off-centre view so the racers sit a third of the way in: everyone at the same x is at the same place
+   across the screen whatever their depth, so nobody looks ahead, and the back lanes sit a touch higher. */
 (function () {
   'use strict';
   const JP = (window.JP = window.JP || {});
   const T = THREE, G = Kit.gfx, LB = JP.lab;
   const H = LB.H;
   const PLANE_Z = 0; // the human's plane: his coins, the brightest beam and the zapper orbs are drawn here
+  const LIFT = 1.2; // how far above the middle of the lab the camera stands: the back lanes show a touch higher
   const ZAP_BACK = -3.1, ZAP_FRONT = 0.45;
   const WALL_Z = -4.3, FRONT_Z = 1.6;
   const COIN_Z = PLANE_Z;
@@ -417,7 +419,7 @@
       // the orb in the human's plane: what he can touch is exactly where he sees it
       G.mesh(new T.SphereGeometry(0.3, 18, 12), capMat, 0, 0, PLANE_Z, e);
       G.mesh(new T.SphereGeometry(0.14, 12, 8), coreMat, 0, 0, PLANE_Z + 0.22, e, false);
-      for (const z of [ZAP_BACK + 0.4, -0.8, -1.6]) {
+      for (const z of [ZAP_BACK + 0.4, -1.15, -2.3]) {
         const ring = G.mesh(new T.TorusGeometry(0.2, 0.05, 8, 18), capMat, 0, 0, z, e, false);
         ring.rotation.y = 0;
       }
@@ -431,7 +433,7 @@
     bt.needsUpdate = true;
     const boltMat = new T.MeshBasicMaterial({ map: bt, color: '#bff6ff', transparent: true, blending: T.AdditiveBlending, depthWrite: false, side: T.DoubleSide });
     const beams = [];
-    for (const z of [PLANE_Z, -0.8, -1.6, ZAP_BACK + 0.25]) {
+    for (const z of [PLANE_Z, -1.15, -2.3, ZAP_BACK + 0.25]) {
       const b = new T.Mesh(new T.PlaneGeometry(1, 0.9), boltMat);
       b.position.z = z;
       g.add(b);
@@ -597,7 +599,7 @@
       cy = hi >= lo ? (hi + lo) / 2 : H / 2;
     }
     const dist = VH / (2 * tan);
-    camera.position.set(camX, cy + 0.5, PLANE_Z + dist);
+    camera.position.set(camX, cy + LIFT, PLANE_Z + dist);
     camera.lookAt(camX, cy, PLANE_Z);
     const ld = lead == null ? 0.5 : lead;
     camera.aspect = aspect;
@@ -609,11 +611,23 @@
     sun.target.updateMatrixWorld();
     view.x = camX;
   }
-  // where to draw something that is at (x, y) but z deep, so that it shows on screen exactly where (x, y) in the
-  // human's plane shows: on the camera's sightline through that point (call after frame())
-  function lineUp(x, y, z, out) {
-    const c = camera.position, k = (c.z - z) / (c.z - PLANE_Z);
-    return out.set(c.x + (x - c.x) * k, c.y + (y - c.y) * k, z);
+  // How much of a flyer at `back` is covered on screen by one at `front` (0 none, 1 all): the boxes round their bodies
+  // (JP.lab.BODY), projected with the camera.
+  const pv = new T.Vector3();
+  function rectOf(p) {
+    const B = LB.BODY;
+    let l = 1e9, r = -1e9, t = 1e9, b = -1e9;
+    for (const [dx, dy] of [[-B.back, -B.down], [B.front, -B.down], [-B.back, B.up], [B.front, B.up]]) {
+      pv.set(p.x + dx, p.y + dy, p.z).project(camera);
+      l = Math.min(l, pv.x); r = Math.max(r, pv.x); t = Math.min(t, pv.y); b = Math.max(b, pv.y);
+    }
+    return { l, r, t, b };
+  }
+  function covered(front, back) {
+    camera.updateMatrixWorld();
+    const a = rectOf(front), c = rectOf(back);
+    const w = Math.max(0, Math.min(a.r, c.r) - Math.max(a.l, c.l)), h = Math.max(0, Math.min(a.b, c.b) - Math.max(a.t, c.t));
+    return (w * h) / Math.max(1e-9, (c.r - c.l) * (c.b - c.t));
   }
   // how many metres of lab are in view across, in the human's plane
   function visibleWidth() {
@@ -694,7 +708,7 @@
   }
 
   JP.world = {
-    PLANE_Z, COIN_Z, ZAP_FRONT, init, setLab, resize, update, render, frame, visibleWidth, lineUp,
+    PLANE_Z, COIN_Z, ZAP_FRONT, init, setLab, resize, update, render, frame, visibleWidth, covered,
     get scene() { return scene; },
     get camera() { return camera; },
     get renderer() { return renderer; },

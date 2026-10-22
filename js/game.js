@@ -60,10 +60,13 @@
 
   // How deep each flyer flies. The human is in the front plane, where his coins are drawn (js/world.js): what touches
   // him on screen touches him in the rules. With two players the brothers share that plane (a hair apart, so they
-  // don't flicker into each other); Foxy and Froggy fly further back, behind the coins, which aren't theirs.
+  // don't flicker into each other), so both get exactly what they touch on screen. Foxy and Froggy fly in their own
+  // lanes further back, behind the coins, which aren't theirs, and a little behind you along the lab (JP.lab.TRAIL), so
+  // you can see them beside you; the camera looks down a little, so their lanes sit a touch higher.
+  const LANES = [0, -1.15, -2.3];
   function laneZ(f) {
     if (humans.length === 2) return f.i === 0 ? 0.06 : -0.06;
-    return f.cpu ? (f.id === 'foxy' ? -0.8 : -1.6) : 0;
+    return f.cpu ? (f.id === 'foxy' ? LANES[1] : LANES[2]) : LANES[0];
   }
 
   // ---------------------------------------------------------------- toasts and the count
@@ -92,8 +95,8 @@
     const labLevel = lv.includes('easy') ? 'easy' : 'normal';
     const flyers = humans.map((id, k) => ({ id, level: save.level[id], lane: k, bot: isDemo ? (save.level[id] === 'easy' ? 'wobbly5' : 'careful8') : null }));
     if (humans.length === 1) {
-      flyers.push({ id: 'foxy', cpu: true, level: labLevel, bot: L.cpuBot('foxy', labLevel), lane: 1 });
-      flyers.push({ id: 'froggy', cpu: true, level: labLevel, bot: L.cpuBot('froggy', labLevel), lane: 2 });
+      flyers.push({ id: 'foxy', cpu: true, level: labLevel, bot: L.cpuBot('foxy', labLevel), lane: 1, dx: L.TRAIL.foxy });
+      flyers.push({ id: 'froggy', cpu: true, level: labLevel, bot: L.cpuBot('froggy', labLevel), lane: 2, dx: L.TRAIL.froggy });
     }
     let seed = seedIn || 1 + Math.floor(Math.random() * 1e9);
     let lab = null;
@@ -448,7 +451,7 @@
   function handleEvents() {
     for (const ev of rc.events) {
       const f = ev.i !== undefined ? rc.flyers[ev.i] : null;
-      const at = f ? W.lineUp(rc.x, f.y, laneZ(f), evAt) : null, z = f ? at.z : 0;
+      const at = f ? evAt.set(rc.x + f.dx, f.y, laneZ(f)) : null, z = f ? at.z : 0;
       if (ev.type === 'coin') {
         W.coinBurst(at.x, at.y, z);
         if (demo) continue;
@@ -665,11 +668,9 @@
     if (mode !== 'finish' && !(mode === 'over' && finishPlan)) {
       rc.flyers.forEach((f, i) => {
         const m = models[i];
-        // drawn on the camera's sightline through where he is in the human's plane: everyone at the same x and height
-        // shows at the same place on screen, Foxy and Froggy just smaller, further back
-        W.lineUp(rc.x, f.y, laneZ(f), m.root.position);
-        // Foxy's and Froggy's little faces only while they're hidden behind the human (level with him)
-        if (m.badge) m.badge.visible = !f.out && Math.abs(f.y - rc.flyers[0].y) < 0.6;
+        m.root.position.set(rc.x + f.dx, f.y, laneZ(f));
+        // Foxy's and Froggy's little faces only while they're really hidden behind the human (most of them covered)
+        if (m.badge) m.badge.visible = !f.out && W.covered(models[0].root.position, m.root.position) > 0.7;
         // a name tag near the ceiling would hide behind it: it goes under his feet instead
         if (m.tag) m.tag.position.y = f.y + m.headTop + 0.4 > L.H - 0.2 ? -m.headTop - 0.35 : m.headTop + 0.4;
         m.update(paused ? 0 : dt, { y: f.y, vy: f.vy, hold: f.hold, ground: f.y <= L.Y_MIN + 1e-6 && !f.hold, dizzy: f.dizzy, safe: f.safe, shield: f.shield, out: f.out });

@@ -121,7 +121,7 @@
       const problems = [];
       const N = 120 * 40;
       const run = (frame) => {
-        const rc = L.race({ seed: 5, level: 'easy', flyers: [{ id: 'teddy' }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'easy') }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'easy') }] });
+        const rc = L.race({ seed: 5, level: 'easy', flyers: [{ id: 'teddy' }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'easy'), dx: L.TRAIL.foxy }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'easy'), dx: L.TRAIL.froggy }] });
         L.go(rc);
         rc.stopAt = N;
         const rnd = L.rng(99);
@@ -290,7 +290,7 @@
       for (const kid of ['wobbly5', 'sloppy5']) {
         let wins = 0, races = 0, kidCoins = 0, cpuCoins = 0;
         for (const seed of o.seeds) {
-          const rc = L.race({ seed, level: 'easy', flyers: [{ id: 'tommy', bot: kid }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'easy') }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'easy') }] });
+          const rc = L.race({ seed, level: 'easy', flyers: [{ id: 'tommy', bot: kid }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'easy'), dx: L.TRAIL.foxy }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'easy'), dx: L.TRAIL.froggy }] });
           L.go(rc);
           for (let n = 0; n < 200000 && rc.phase !== 'done'; n++) L.step(rc, 1 / 60, () => false);
           races++;
@@ -312,7 +312,7 @@
       const problems = [];
       let wins = 0, races = 0, kidCoins = 0, cpuCoins = 0, outs = 0;
       for (const seed of o.seeds) {
-        const rc = L.race({ seed, level: 'normal', flyers: [{ id: 'teddy', bot: 'careful8' }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'normal') }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'normal') }] });
+        const rc = L.race({ seed, level: 'normal', flyers: [{ id: 'teddy', bot: 'careful8' }, { id: 'foxy', cpu: true, bot: L.cpuBot('foxy', 'normal'), dx: L.TRAIL.foxy }, { id: 'froggy', cpu: true, bot: L.cpuBot('froggy', 'normal'), dx: L.TRAIL.froggy }] });
         L.go(rc);
         for (let n = 0; n < 200000 && rc.phase !== 'done'; n++) L.step(rc, 1 / 60, () => false);
         races++;
